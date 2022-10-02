@@ -1,0 +1,31 @@
+* bumpve
+** bump algorithm
+Validate the input string against a semver regular expression.
+If it does not conform to the formatting rules exit on an error state.
+Split the input string to its most fundamental constituent parts.
+Bump the user selected identifier according to the bumping rules of the
+constituent part it is a member of.
+Each token that has a lower precedence than the selected identifier should be
+reset to its virgin state according to the bumping rules of the constituent part
+it is a member of.
+Return the new version.
+** Semantic version parsing and tokens
+A string which conforms to the Semantic versioning scheme 2.0 is considered a
+valid *semantic version* or *semver* for short.
+
+The constituent parts that make up a semver are:
+
+CORE
+PRE-RELEASE
+BUILD
+
+Each of the constituent parts shall be labeled henceforth as *element* and
+collectively as the *elements*.
+
+Each of the elements is identified by their respective *${ELEMENT}_RE*
+
+An element is further broken down into *identifers*.
+** Options
+-a --auto
+shall append missing element and identifiers as neccessary if the target element
+is missing.
