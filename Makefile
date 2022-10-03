@@ -14,13 +14,14 @@ scripts := $(addprefix $(bindir)/, $(scripts))
 
 .PHONY: install
 install: $(scripts)
-	@if [[ ":$$PATH:" != *":$(bindir):"* ]]; then \
+	@echo "Installation directory: $(bindir)"; \
+	if [[ ":$$PATH:" != *":$(bindir):"* ]]; then \
 	echo "ADD TO PATH: $(bindir)"; \
 	fi
 
 $(bindir)/%.sh: %.sh | $(bindir)
 	@echo "Installing $(@F)"
-	@cat $^ > $@
+	@cat $^ > $@; chmod +x $@
 
 $(bindir):
 	@mkdir -p $(bindir)
