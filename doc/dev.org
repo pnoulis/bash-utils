@@ -9,7 +9,7 @@ Each token that has a lower precedence than the selected identifier should be
 reset to its virgin state according to the bumping rules of the constituent part
 it is a member of.
 Return the new version.
-** Semantic version parsing and tokens
+** Parsing Semantic versions
 A string which conforms to the Semantic versioning scheme 2.0 is considered a
 valid *semantic version* or *semver* for short.
 
@@ -25,6 +25,14 @@ collectively as the *elements*.
 Each of the elements is identified by their respective *${ELEMENT}_RE*
 
 An element is further broken down into *identifers*.
+
+The CORE element's form is fixed as per the specification to:
+x.y.z
+Where [ x, y, z ] are each numbers of any length without leading 0's.
+
+The PRE-RELEASE element's form is not fixed as per the specification. It only
+imposes limits on the available characters.
+
 ** Options
 -a --auto
 shall append missing element and identifiers as neccessary if the target element
