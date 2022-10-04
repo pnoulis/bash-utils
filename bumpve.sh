@@ -11,6 +11,7 @@ VERSION=
 ELEMENT_TARGET=
 IDENTIFIER_TARGET=
 STITCH=
+STRICT=0
 QUIET=
 
 function usage {
@@ -36,7 +37,6 @@ CORE_RE="(?:0\.|[1-9]\d*\.){2}(?:0|[1-9]\d*)"
 RELEASE_RE="(?:(?:[-1-9][-0-9]*|[-a-zA-Z]*|0)\.)*(?:[-1-9][-0-9]*|[-a-zA-Z]*|0)"
 BUILD_RE="(?:[-a-zA-Z0-9]*\.)*[-a-zA-Z0-9]*"
 SEMVER_RE="^${PREFIX_RE}?${CORE_RE}(?:-${RELEASE_RE})?(?:\\+${BUILD_RE})?\$"
-MAX_IDENTIFIERS=3
 DATE_FMT=(
     [0]="%a-%d-%m-%Y"
     [1]="%Y%m%d"
@@ -67,6 +67,42 @@ function stateError {
     exit 1
 }
 
+function readSchema {
+    schema='{
+        "core": [
+            0,
+            0,
+            0
+        ],
+        "release": [
+            ["alpha", "beta", "rc"],
+            0,
+        ],
+        "build": [
+            { "_date": "formatString" },
+            0
+        ]
+    }'
+    echo -n "$schema"
+}
+
+# params
+# { string } element
+# { integer } identifier
+function expandIdentifier {
+    readSchema | jq -r --arg e $1 --arg i $2 '
+    .[$e][$i|tonumber] |
+    if type == "array" then ["array", .[]] | join(" ")
+    elif type == "object" then to_entries[] | flatten | ["object", .[]] | join(" ")
+    elif type == "number" then ["number", .] | join(" ")
+    else null end
+    '
+}
+
+function getIdentifierKeys {
+    readSchema | jq -r --arg e $1 '.[$e]? | [range(0, length)] | join("\n")'
+}
+
 # params
 # { string } element $1
 function bumpCore {
@@ -95,10 +131,21 @@ function bumpCore {
 function bumpRelease {
     IFS="." read -a tokens <<< "$1"
     local major=("alpha" "beta" "rc")
-    local i=0
+    local i=
+
+
+    [[ $STITCH ]] && {
+        while read key; do
+            read -a id <<< $(expandIdentifier "release" $key)
+            echo "${id[@]}"
+        done <<< $(getIdentifierKeys "release")
+
+        for i in ${!tokens[@]}; do
+            [[ ! ${tokens[$i]} ]] && tokens[$i]=
+        done
+    }
 
     [[ -z $IDENTIFIER_TARGET || $STITCH ]] && i=0
-    # [[ ! $i ]] && i=$IDENTIFIER_TARGET
 
     case $i in
         0)
@@ -109,6 +156,7 @@ function bumpRelease {
             ;;
         3)
             [[ ! ${tokens[2]} && $STITCH ]] && tokens[2]=0
+            ;;
         *)
             stateError
             ;;
@@ -173,7 +221,7 @@ function bump {
     return 0
 }
 
-while getopts ":hcrbMmpsq" o; do
+while getopts ":hcrbMmpsSq" o; do
     case $o in
         c) # core
             ELEMENT_TARGET=0
