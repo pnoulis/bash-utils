@@ -1,0 +1,6 @@
+# emacs autosave files
+.#*
+# emacs undo tree files
+*.~undo-tree~
+# tmp for experiments
+/tmp
