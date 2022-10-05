@@ -37,3 +37,14 @@ imposes limits on the available characters.
 -a --auto
 shall append missing element and identifiers as neccessary if the target element
 is missing.
+** stitch identifier
+Should stitch only the identifier being bumped.
+** stitch leading identifiers
+Should stitch the identifiers up to and including the one being bumped.
+** stitch element
+Should stitch the whole element
+** stitch trailing
+Should stitch trailing identifiers across element boundaries up to and including
+the one being bumped.
+** stitch semver
+** stitch all

@@ -8,11 +8,13 @@
 # Options
 ## -------------------------------------- ##
 VERSION=
+#VERSION="v1.0.0-alpha.1+build.1"
+#VERSION="v1.0.0+build.1"
 ELEMENT_TARGET=
 IDENTIFIER_TARGET=
 STITCH=
-STITCH_ALL=
-LAX=0
+PREFIX=
+VALIDATE=
 QUIET=
 
 function usage {
@@ -45,7 +47,59 @@ DATE_FMT=(
     [2]="%d%m%Y"
     [3]="%a%d%m%Y"
 )
-elements=
+stitchUpperBound=
+stitchLowerBound=
+declare -A elements
+elements=(
+    ["core"]=
+    ["release"]=
+    ["build"]=
+)
+declare -A targets
+# potentially:
+# targets=(
+#     ["core"]=
+#     ["release"]=
+#     ["build"]=
+# )
+
+# params
+# { string } format string %d%m...
+function _date {
+    local defaults=(
+        [0]="%a-%d-%m-%Y"
+        [1]="%Y%m%d"
+        [2]="%d%m%Y"
+        [3]="%a%d%m%Y"
+    )
+    if [[ -z "$1" || "$1" -lt ${#defaults[@]} ]]; then
+        echo "$(date +"${defaults[$1]}")"
+    else
+        echo "$(date "$1")"
+    fi
+}
+
+# params
+# element
+calculateStitchBounds() {
+    [[ -z $STITCH ]] && return 0
+
+    case "$STITCH" in
+        i) # only identifier #id
+        ;;
+        l) # element up to and including identifier # eltoid
+        ;;
+        e) # element # el
+        ;;
+        v) # across element boundaries up to and including identifier # vtoid
+        ;;
+        V) # the whole version # vtov
+        ;;
+        *)
+            stateError
+            ;;
+    esac
+}
 
 # params
 # { string,... } identifiers
@@ -77,7 +131,7 @@ function readSchema {
             0
         ],
         "build": [
-            { "_date": 3 },
+            { "_date": ["one", "two"] },
             0
         ]
     }'
@@ -85,43 +139,38 @@ function readSchema {
 }
 
 # params
-# { string } element
-# { integer } identifier
-function expandIdentifier {
-    readSchema | jq -r --arg e $1 --arg i $2 '
-    .[$e][$i|tonumber] |
-    if type == "array" then ["array", .[]] | join(" ")
-    elif type == "object" then to_entries[] | flatten | ["object", .[]] | join(" ")
+# { string } element $1 {core | release | buid}
+# { integer } identifier $2 {0, 1, ...}
+expandSchemaIdentifier() {
+    readSchema | jq -r --arg e "$1" --arg i "$2" '
+    .[$e][$i|tonumber]
+    | if type == "array" then ["array", .[]] | join(" ")
+    elif type == "object" then to_entries[] | ["object", .key, (.value | join(","))] | join(" ")
     elif type == "number" then ["number", .] | join(" ")
     else null end
-    '
+'
 }
 
 # params
-# { string } element
-function getIdentifierKeys {
-    readSchema | jq -r --arg e $1 '.[$e]? | [range(0, length)] | join("\n")'
+# { string } element $1 {core | release | build}
+getSchemaElementIndices() {
+    readSchema | jq -r --arg e "$1" '.[$e] | [range(0, length)] | join(" ")'
 }
 
 # params
-# { string } format string %d%m...
-function _date {
-    local defaults=(
-        [0]="%a-%d-%m-%Y"
-        [1]="%Y%m%d"
-        [2]="%d%m%Y"
-        [3]="%a%d%m%Y"
-    )
-    if [[ -z "$1" || "$1" -lt ${#defaults[@]} ]]; then
-        echo "$(date +"${defaults[$1]}")"
-    else
-        echo "$(date "$1")"
-    fi
+# { string } element {core,release,build}
+getSchemaElementLength() {
+    readSchema | jq -r --arg e "$1" '.[$e] | length'
 }
 
 # params
-# { string } schema key
-# { integer } identifier
+# { string } element $1 {core | release | build}
+# { integer } identifier $2 {0 | 1 | 2}
+
+# params
+# { string } schema key $1
+# { integer } identifier $2
+# { any } previous identifier value $3
 function stitch {
     local patch=()
     while read key; do
@@ -267,36 +316,41 @@ function bump {
     return 0
 }
 
-while getopts ":hcrbMmpsSq" o; do
-    case $o in
-        c) # core
-            ELEMENT_TARGET=0
-            ;;
-        r) # release
-            ELEMENT_TARGET=1
-            ;;
-        b) # build
-            ELEMENT_TARGET=2
-            ;;
+translateBumpArgument() {
+    case "$1" in
         M) # major
-            IDENTIFIER_TARGET=0
+            echo -n 0
             ;;
         m) # minor
-            IDENTIFIER_TARGET=1
+            echo -n 1
             ;;
         p) # patch
-            IDENTIFIER_TARGET=2
+            echo -n 2
+            ;;
+        *)
+            stateError
+            ;;
+    esac
+}
+while getopts ":hc:r:b:s:pvq" o; do
+    case $o in
+        c) # core
+            targets["core"]=$(translateBumpArgument "$OPTARG")
+            ;;
+        r) # release
+            targets["release"]=$(translateBumpArgument "$OPTARG")
+            ;;
+        b) # build
+            targets["build"]=$(translateBumpArgument "$OPTARG")
             ;;
         s) # stitch
-            STITCH=0
-            # completes missing parts if any of a semver according to provided
-            # release and build schemes
+            STITCH="$OPTARG"
             ;;
-        S) # stitch all
-            STITCH_ALL=0
+        p) # prefix
+            echo "prefix"
             ;;
-        l) # lax
-            LAX=0
+        v) # validate
+            echo "validate"
             ;;
         q) # quiet
             QUIET=0
@@ -311,68 +365,56 @@ while getopts ":hcrbMmpsSq" o; do
             ;;
     esac
 done
-
 shift $((OPTIND - 1))
 
-#VERSION="v1.0.0-alpha.1+build.1"
-# VERSION="v1.0.0+build.1"
-VERSION=
+cat <<EOF
+VERSION: ${VERSION}
+core target: "${targets[core]}"
+release target: "${targets[release]}"
+build target: "${targets[build]}"
+---------------------------------------------------------------
+EOF
 
-# Where +1 offsets the prefix at elements[0]
-((ELEMENT_TARGET++))
-echo "VERSION: ${VERSION}"
-echo "ELEMENT TARGET: ${ELEMENT_TARGET}"
-echo "IDENTIFIER TARGET: ${IDENTIFIER_TARGET}"
-echo -----------------------------
+# elements["version"]="$(grep -Po "${PREFIX_RE}" <<< "$VERSION")"
+elements["core"]="$(grep -Po "${CORE_RE}" <<< "$VERSION")"
+elements["release"]="$(grep -Po "\-${RELEASE_RE}\\+" <<< "$VERSION" | sed 's/[-+]//g')"
+elements["build"]="$(grep -Po "\\+${BUILD_RE}$" <<< "$VERSION" | sed 's/[+]//g')"
 
-elements=(
-    [0]="$(grep -Po "${PREFIX_RE}" <<< "$VERSION")"
-    [1]="$(grep -Po "${CORE_RE}" <<< "$VERSION")"
-    [2]="$(grep -Po "\-${RELEASE_RE}\\+" <<< "$VERSION" | sed 's/[-+]//g')"
-    [3]="$(grep -Po "\\+${BUILD_RE}$" <<< "$VERSION" | sed 's/[+]//g')"
-)
+# schema=""
+for i in "${!elements[@]}"; do
+    IFS="." read -a identifiers <<< "${elements[i]}"
+    for y in "$(getSchemaElementIndices $i)"; do
+        echo $i : "$y"
+    done
+done
 
-[[ $STITCH_ALL ]] && {
-    unset STITCH
-    [[ -z "${elements[1]}" ]] && {
-        elements[1]=$(stitch "core")
-    }
-    [[ -z "${elements[2]}" ]] && {
-        elements[2]=$(stitch "release")
-    }
-    [[ -z "${elements[3]}" ]] && {
-        elements[3]=$(stitch "build")
-    }
+declare -A lengths
+declare -A offsets
+lengths["core"]=$(getSchemaElementLength "core")
+lengths["release"]=$(getSchemaElementLength "release")
+lengths["build"]=$(getSchemaElementLength "build")
+lengths["total"]=$((${lengths["core"]} + ${lengths["release"]} + ${lengths["build"]}))
+offsets["core"]=0
+offsets["release"]=$((${lengths["core"]} - 1))
+offsets["build"]=$((${lengths["release"]} + ${offsets["release"]}))
+[[ -z $STITCH ]] && {
+    case "$STITCH" in
+        i) # only identifier #id
+        ;;
+        l) # element up to and including identifier # eltoid
+        ;;
+        e) # element # el
+        ;;
+        v) # across element boundaries up to and including identifier # vtoid
+        ;;
+        V) # the whole version # vtov
+        ;;
+        *)
+            stateError
+            ;;
+    esac
 }
-joinTokens "${elements[@]}"
-bumpCore "${elements[$ELEMENT_TARGET]}"
 
-# case $ELEMENT_TARGET in
-#     0)
-#         bumpCore "${elements[$ELEMENT_TARGET]}"
-#         ;&
-#     1)
-#         bumpRelease "${elements[$ELEMENT_TARGET]}"
-#         ;&
-#     2)
-#         bumpBuild "${elements[$ELEMENT_TARGET]}"
-#         ;&
-#     *)
-#         stateError
-#         ;;
-# esac
+echo "${lengths[@]}"
+echo "${offsets[@]}"
 
-# echo "${elements[@]}"
-
-# elements[$ELEMENT_TARGET]=$(bump "${elements[ELEMENT_TARGET]}" $ELEMENT_TARGET)
-# unset IDENTIFIER_TARGET
-# ((ELEMENT_TARGET++))
-
-# while [ $ELEMENT_TARGET -le 3 ]; do
-#     echo $ELEMENT_TARGET
-#     elements[$ELEMENT_TARGET]=$(bump "${elements[$ELEMENT_TARGET]}" $ELEMENT_TARGET)
-#     ((ELEMENT_TARGET++))
-# done
-
-# VERSION="${elements[0]}${elements[1]}-${elements[2]}+${elements[3]}"
-# echo "$VERSION"
