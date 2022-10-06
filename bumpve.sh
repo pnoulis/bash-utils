@@ -106,6 +106,7 @@ calculateStitchBounds() {
 function joinTokens {
     local str=""
     local len=$#
+    local i
     for (( i = 1; i < len; i++ )); do
         [[ "${!i}" ]] && str+="${!i}."
     done
