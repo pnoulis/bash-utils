@@ -5,33 +5,15 @@
 # https://semver.org/
 
 
-# Options
+# Options && args
 ## -------------------------------------- ##
-VERSION=
-#VERSION="v1.0.0-alpha.1+build.1"
-#VERSION="v1.0.0+build.1"
-ELEMENT_TARGET=
-IDENTIFIER_TARGET=
-STITCH=
+INPUT=
 PREFIX=
+STITCH=
 VALIDATE=
-QUIET=
-
-function usage {
-    cat <<EOF
-${0}: [OPTION]... version
--c core
--r release
--b build
--M major
--m minor
--p patch
--s stitch {just up to the current identifier of the current element being bumped}
--S stitch all
--q quiet
--h help
-EOF
-}
+DEBUG=
+BUMP=0
+bumpTarget=$((0))
 
 # Utils
 # --------------------------------------- ##
@@ -41,86 +23,212 @@ CORE_RE="(?:0\.|[1-9]\d*\.){2}(?:0|[1-9]\d*)"
 RELEASE_RE="(?:(?:[-1-9][-0-9]*|[-a-zA-Z]*|0)\.)*(?:[-1-9][-0-9]*|[-a-zA-Z]*|0)"
 BUILD_RE="(?:[-a-zA-Z0-9]*\.)*[-a-zA-Z0-9]*"
 SEMVER_RE="^${PREFIX_RE}?${CORE_RE}(?:-${RELEASE_RE})?(?:\\+${BUILD_RE})?\$"
-DATE_FMT=(
-    [0]="%a-%d-%m-%Y"
-    [1]="%Y%m%d"
-    [2]="%d%m%Y"
-    [3]="%a%d%m%Y"
-)
-stitchUpperBound=
-stitchLowerBound=
-declare -A elements
-elements=(
-    ["core"]=
-    ["release"]=
-    ["build"]=
-)
-declare -A targets
-# potentially:
-# targets=(
-#     ["core"]=
-#     ["release"]=
-#     ["build"]=
-# )
 
-# params
-# { string } format string %d%m...
-function _date {
-    local defaults=(
-        [0]="%a-%d-%m-%Y"
-        [1]="%Y%m%d"
-        [2]="%d%m%Y"
-        [3]="%a%d%m%Y"
-    )
-    if [[ -z "$1" || "$1" -lt ${#defaults[@]} ]]; then
-        echo "$(date +"${defaults[$1]}")"
-    else
-        echo "$(date "$1")"
+main() {
+    declare -ag length
+    declare -ag offset
+    length[0]=$(getSchemaElementLength "core")
+    length[1]=$(getSchemaElementLength "release")
+    length[2]=$(getSchemaElementLength "build")
+    length[3]=$((-1)) # stitch length
+    length[4]=$((${length[0]} + ${length[1]} + ${length[2]})) # total length
+    offset[0]=0
+    offset[1]=$((${length[0]}))
+    offset[2]=$((${offset[1]} + ${length[1]}))
+    offset[3]=$((-1)) # stitch offset
+
+    # redirection or pipe
+    if [[ -p /dev/stdin || ! -t 0 ]]; then
+        read -r INPUT
     fi
+
+    while getopts "hcrbMmps:dv" o; do
+        case "$o" in
+            h) # help
+                usage
+                ;;
+            c) # core
+                BUMP=1
+                bumpTarget=$((${offset[0]} + bumpTarget))
+                ;;
+            r) # release
+                BUMP=1
+                bumpTarget=$((${offset[1]} + bumpTarget))
+                ;;
+            b) # build
+                BUMP=1
+                bumpTarget=$((${offset[2]} + bumpTarget))
+                ;;
+            M) # major
+                bumpTarget=$((0 + bumpTarget))
+                ;;
+            m) # minor
+                bumpTarget=$((1 + bumpTarget))
+                ;;
+            p) # patch
+                bumpTarget=$((2 + bumpTarget))
+                ;;
+            s) # stitch
+                STITCH="$OPTARG"
+                ;;
+            d) # debug
+                DEBUG=1
+                ;;
+            v) # validate
+                VALIDATE=1
+                ;;
+            *)
+                ;;
+        esac
+    done
+    shift $((OPTIND - 1))
+    (( $# > 0 )) && INPUT="$1"
+
+    [ -n "$STITCH" ] && calculateStitchRange
+    ((BUMP == 1 )) && bump
+    ((VALIDATE == 1)) && validate "$INPUT"
+}
+
+usage() {
+    cat <<EOF
+${0}: [OPTION]... version
+-c core
+-r release
+-b build
+-M major
+-m minor
+-p patch
+-s stitch
+-d debug
+-v validate
+-h help
+EOF
+}
+
+
+# param
+# { string } message
+stateError() {
+    echo "error"
+    exit 1
 }
 
 # params
-# element
-calculateStitchBounds() {
-    [[ -z $STITCH ]] && return 0
+# { integer } $1, index
+# { boolean } $2, show
+debug() {
+    (($# > 1 )) && {
+        echo -e "${YELLOW}target:${NC}" "${PURPLE}$bumpTarget${NC}"
+        echo -e "${YELLOW}stitch start:${NC}" "${PURPLE}${offset[3]}${NC}" \
+             "${YELLOW}stitch end:${NC}" "${PURPLE}${length[3]}${NC}"
+        echo -e bump: "${debug[bump]}"
+        echo -e empty: "${debug[empty]}"
+        echo -e stitch: "${debug[stitch]}"
+        echo -e reset: "${debug[reset]}"
+        return $?
+    }
 
-    case "$STITCH" in
-        i) # only identifier #id
-        ;;
-        l) # element up to and including identifier # eltoid
-        ;;
-        e) # element # el
-        ;;
-        v) # across element boundaries up to and including identifier # vtoid
-        ;;
-        V) # the whole version # vtov
-        ;;
+    (( ${#debug[@]} == 0 )) && {
+        declare -gA debug
+        debug["empty"]=""
+        debug["stitch"]=""
+        debug["bump"]=""
+        debug["reset"]=""
+        PURPLE='\033[0;35m'
+        YELLOW='\033[0;33m'
+        BLUE='\033[0;34m'
+        RED='\033[0;31m'
+        NC='\033[0m'
+    }
+
+    if (( $BUMP == 1 )); then
+        debug["bump"]+="${RED}0${NC}"
+    else
+        debug["bump"]+='0'
+    fi
+
+    if (( $STITCH == 1 )); then
+        debug["stitch"]+="${RED}0${NC}"
+    else
+        debug["stitch"]+='0'
+    fi
+
+    if (( $EMPTY == 1 )); then
+        debug["empty"]+="${RED}0${NC}"
+    else
+        debug["empty"]+='0'
+    fi
+
+    if (( $RESET == 1 )); then
+        debug["reset"]+="${RED}0${NC}"
+    else
+        debug["reset"]+='0'
+    fi
+
+    (($1 == ${offset[1]} - 1 || $1 == ${offset[2]} - 1)) && {
+        for z in "${!debug[@]}"; do
+            debug[$z]+="${BLUE}.${NC}"
+        done
+    }
+
+    return $?
+}
+
+# params
+# example: -scM-bp -> would register all identifiers up for stitches
+# example: -s -> stich up to bump target
+calculateStitchRange() {
+    [ $STITCH == '-' ] && {
+        offset[3]=0
+        length[3]=$bumpTarget
+        return 0
+    }
+    IFS='-' read offset[3] length[3] <<<"$STITCH"
+    [ -z ${length[3]} ] && length[3]=${offset[3]}
+    offset[3]=$(getIndex $(decodeClarg ${offset[3]:0:1}) $(decodeClarg ${offset[3]:1:1}))
+    length[3]=$(getIndex $(decodeClarg ${length[3]:0:1}) $(decodeClarg ${length[3]:1:1}))
+    [[ ${length[3]} -lt ${offset[3]} ]] && stateError
+    return $?
+}
+
+# params
+# { any } a command line argument $1 {c | r | b | M | m | p | 0 | 1 | 2}
+decodeClarg() {
+    case $1 in
+        c)
+            echo -n 0
+            ;;
+        r)
+            echo -n 1
+            ;;
+        b)
+            echo -n 2
+            ;;
+        M)
+            echo -n 0
+            ;;
+        m)
+            echo -n 1
+            ;;
+        p)
+            echo -n 2
+            ;;
+        0)
+            echo -n 'core'
+            ;;
+        1)
+            echo -n 'release'
+            ;;
+        2)
+            echo -n 'build'
+            ;;
         *)
             stateError
             ;;
     esac
 }
 
-# params
-# { string,... } identifiers
-function joinTokens {
-    local str=""
-    local len=$#
-    local i
-    for (( i = 1; i < len; i++ )); do
-        [[ "${!i}" ]] && str+="${!i}."
-    done
-    str+="${!len}"
-    echo $str
-    return 0
-}
-
-function stateError {
-    [[ $QUIET ]] && exit 1
-    exit 1
-}
-
-function readSchema {
+readSchema() {
     schema='{
         "core": [
             0,
@@ -140,6 +248,18 @@ function readSchema {
 }
 
 # params
+# { string } element {core,release,build}
+getSchemaElementLength() {
+    readSchema | jq -r --arg e "$1" '.[$e] | length'
+}
+
+# params
+# { string } element $1 {core | release | build}
+getSchemaElementIndices() {
+    readSchema | jq -r --arg e "$1" '.[$e] | [range(0, length)] | join(" ")'
+}
+
+# params
 # { string } element $1 {core | release | buid}
 # { integer } identifier $2 {0, 1, ...}
 expandSchemaIdentifier() {
@@ -153,269 +273,194 @@ expandSchemaIdentifier() {
 }
 
 # params
-# { string } element $1 {core | release | build}
-getSchemaElementIndices() {
-    readSchema | jq -r --arg e "$1" '.[$e] | [range(0, length)] | join(" ")'
+# { integer } element $1 [0 = core | 1 = release | 2 = build]
+# { integer } identifer $2 [0 = major | 1 = minor | 2 = patch]
+getIndex() {
+    echo $((${offset[$1]} + $2))
+    return 0
 }
 
 # params
-# { string } element {core,release,build}
-getSchemaElementLength() {
-    readSchema | jq -r --arg e "$1" '.[$e] | length'
-}
-
-# params
-# { string } element $1 {core | release | build}
-# { integer } identifier $2 {0 | 1 | 2}
-
-# params
-# { string } schema key $1
-# { integer } identifier $2
+# { string } element name $1 {core | release | build}
+# { integer } identifier index $2 {0 | 1 | 2}
 # { any } previous identifier value $3
-function stitch {
-    local patch=()
-    while read key; do
-        read -a ids <<< "$(expandIdentifier "$1" $key)"
-        case "${ids[0]}" in
-            array)
-                patch[$key]="${ids[1]}"
-                ;;
-            object)
-                patch[$key]=$(eval "${ids[@]:1}")
-                ;;
-            number)
-                patch[$key]="${ids[1]}"
-                ;;
-            *)
-                ;;
-        esac
-    done <<< "$(getIdentifierKeys "$1")"
-    joinTokens "${patch[@]}"
-}
-
-
-# params
-# { string } element $1
-# { integer } identifier $2
-function bumpCore {
-    IFS="." read -a tokens <<< "$1"
+stitch() {
+    local patch=""
     local i=0
-    local range=${#tokens[@]}
-
-    [[ -n $IDENTIFIER_TARGET ]] && {
-        echo "identifier target picked"
-        range=$((IDENTIFIER_TARGET++))
-        unset IDENTIFIER_TARGET
-    }
-
-    for ((i = 0; i <= $range; i++)); do
-        echo $i
-        (
-            [[ -n "${tokens[$i]}" ]] && echo "some"
-        ) || (
-            [[ -z "${tokens[$i]}" && $STITCH ]] && echo "some"
-        ) || stateError
-    done
-
-    # [[ -n $IDENTIFIER_TARGET ]] && {
-    #     i=$IDENTIFIER_TARGET
-    #     ((tokens[i]++))
-    #     ((i++))
-    # }
-
-    # while [ $i -lt $len ]; do
-    #     tokens[i]=0
-    #     ((i++))
-    # done
-    # joinTokens "${tokens[@]}"
-    # return 0
+    read -a ids <<< $(expandSchemaIdentifier  $1 $2)
+    case ${ids[0]} in
+        array)
+            ids=("${ids[@]:1}")
+            if [ -n "$3" ]; then
+                for i in "${!ids[@]}"; do
+                    if [ "$3" == "${ids[i]}" ]; then
+                        ((++i == ${#ids[@]})) && ((i--))
+                        patch="${ids[i]}"
+                        break
+                    fi
+                done
+            else
+                patch="${ids[0]}"
+            fi
+            ;;
+        object)
+            patch=$(eval "${ids[@]:1}")
+            ;;
+        number)
+            if [ -n "$3" ]; then
+                patch=$(($3 + 1))
+            else
+                patch=${ids[1]}
+            fi
+            ;;
+        *)
+            stateError
+            ;;
+    esac
+    [ -z "$patch" ] && stateError
+    echo "$patch"
+    return $?
 }
 
+# params
+# { integer } $1, element index, 0..schemaLength
+shouldStitch() {
+    if (( $1 >= ${offset[3]} && $1 <= ${length[3]} )); then
+        STITCH=1
+    else
+        STITCH=0
+    fi
+    return $?
+}
 
 # params
-# { string } element $1
-# { boolean } mode $2
-function bumpRelease {
-    IFS="." read -a tokens <<< "$1"
-    local major=("alpha" "beta" "rc")
-    local i=
+# { integer } $1, element index, 0..schemaLength
+shouldReset() {
+    if (( $1 > $bumpTarget )); then
+        RESET=1
+    else
+        RESET=0
+    fi
+    return $?
+}
 
+# params
+# { integer } $1, element index, 0..schemaLength
+shouldBump() {
+    if (( $1 == $bumpTarget )); then
+        BUMP=1
+    else
+        BUMP=0
+    fi
+    return $?
+}
 
-    # [[ -z $IDENTIFIER_TARGET || $STITCH ]] && i=0
+# params
+# { string } $1, element, "identifier"
+isEmpty() {
+    if [ -z "$1" ]; then
+        EMPTY=1
+    else
+        EMPTY=0
+    fi
+    return $?
+}
 
-    # case $i in
-    #     0)
-    #         [[ ! ${tokens[0]} && $STITCH ]] && tokens[0]=${major[0]}
-    #         ;&
-    #     1)
-    #         [[ ! ${tokens[1]} && $STITCH ]] && tokens[1]=1
-    #         ;;
-    #     3)
-    #         [[ ! ${tokens[2]} && $STITCH ]] && tokens[2]=0
-    #         ;;
-    #     *)
-    #         stateError
-    #         ;;
-    # esac
+# params
+# { string,... } identifiers
+joinTokens() {
+    local str=""
+    local len=$#
+    for (( i = 1; i < len; i++ )); do
+        [[ "${!i}" ]] && str+="${!i}."
+    done
+    str+="${!len}"
+    echo $str
+    return 0
+}
 
+bump() {
+    elements[0]="$(grep -Po "${CORE_RE}" <<< "$INPUT")"
+    elements[1]="$(grep -Po "\-${RELEASE_RE}\\+" <<< "$INPUT" | sed 's/[-+]//g')"
+    elements[2]="$(grep -Po "\\+${BUILD_RE}$" <<< "$INPUT" | sed 's/[+]//g')"
+    EMPTY=
+    BUMP=
+    STITCH=
+    RESET=
+    # as in global index; the position of the current identifier within the full schema version.
+    local gindex=
+    for i in "${!elements[@]}"; do
+        # split current semantic version element into its identifiers
+        IFS='.' read -a identifiers <<< "${elements[$i]}"
+        # iterate over the current registered element's identifiers
+        for y in $(getSchemaElementIndices $(decodeClarg $i)); do
+            # the current identifier's index within the set of all registered identifiers
+            gindex=$(getIndex $i $y)
+            shouldBump $gindex
+            isEmpty "${identifiers[$y]}"
+            shouldReset $gindex
+            shouldStitch $gindex
+            (( DEBUG == 1 )) && debug $gindex
 
-    if [[ -z $IDENTIFIER_TARGET ]]; then # empty
-        tokens[0]=${major[0]}
-        tokens[1]=1
-    elif [[ $IDENTIFIER_TARGET -ge len ]]; then # non empty out of bounds
-        stateError
-    else # non empty within bounds
-        case $IDENTIFIER_TARGET in
-            0)
-                tokens[0]=${major[$IDENTIFIER_TARGET + 1]}
-                unset IDENTIFIER_TARGET
-                ;&
+            if ((EMPTY == 1)); then
+                if ((STITCH == 1)); then
+                    identifiers[y]=$(stitch $(decodeClarg $i) $y)
+                fi
+                if ((BUMP == 1)); then
+                    [[ -z "${identifiers[$y]}" ]] && {
+                        stateError
+                    }
+                    identifiers[y]=$(stitch $(decodeClarg $i) $y "${identifiers[y]}")
+                fi
+            elif ((BUMP == 1)); then
+                identifiers[y]=$(stitch $(decodeClarg $i) $y "${identifiers[y]}")
+            elif ((RESET == 1)); then
+                identifiers[y]=$(stitch $(decodeClarg $i) $y)
+            fi
+        done
+
+        case $i in
             1)
-                ((tokens[1]++))
-                unset IDENTIFIER_TARGET
                 ;;
-            *)
-                stateError
+            2)
                 ;;
         esac
-    fi
-    joinTokens "${tokens[@]}"
-}
-
-function bumpBuild {
-    IFS="." read -a tokens <<< "$1"
-    local major=$(date +${DATE_FMT[3]})
-    tokens[0]="$major"
-    tokens[1]=1
-
-    [[ $IDENTIFIER_TARGET -gt 0 ]] && {
-        ((tokens[1]++))
-    }
-
-    joinTokens "${tokens[@]}"
-    return 0
+        (( ${#identifiers[@]} > 0 )) && {
+            case $i in
+                0)
+                    elements[i]="$(joinTokens ${identifiers[@]})"
+                    ;;
+                1)
+                    elements[i]="-$(joinTokens ${identifiers[@]})"
+                    ;;
+                2)
+                    elements[i]="+$(joinTokens ${identifiers[@]})"
+                    ;;
+            esac
+        }
+    done
+    (( DEBUG == 1 )) && debug 0 "show"
+    echo "${elements[@]}" | sed 's/\s//g'
 }
 
 # params
-# { string } semver element $1
-# { integer } semver element type $2 CORE | RELEASE | BUILD
-function bump {
-    case "$2" in
-        1) # CORE
-            bumpCore "$1"
-            ;;
-        2) # RELEASE
-            bumpRelease "$1"
-            ;;
-        3) # BUILD
-            bumpBuild "$1"
-            ;;
-        *)
-            return 1
-            ;;
-    esac
-    return 0
+# { string } version string
+validate() {
+    echo "$(grep -Po "${SEMVER_RE}" <<< "$1" )"
 }
 
-translateBumpArgument() {
-    case "$1" in
-        M) # major
-            echo -n 0
-            ;;
-        m) # minor
-            echo -n 1
-            ;;
-        p) # patch
-            echo -n 2
-            ;;
-        *)
-            stateError
-            ;;
-    esac
-}
-while getopts ":hc:r:b:s:pvq" o; do
-    case $o in
-        c) # core
-            targets["core"]=$(translateBumpArgument "$OPTARG")
-            ;;
-        r) # release
-            targets["release"]=$(translateBumpArgument "$OPTARG")
-            ;;
-        b) # build
-            targets["build"]=$(translateBumpArgument "$OPTARG")
-            ;;
-        s) # stitch
-            STITCH="$OPTARG"
-            ;;
-        p) # prefix
-            echo "prefix"
-            ;;
-        v) # validate
-            echo "validate"
-            ;;
-        q) # quiet
-            QUIET=0
-            ;;
-        h)
-            usage
-            exit 0
-            ;;
-        *)
-            usage > /dev/stderr
-            exit 1
-            ;;
-    esac
-done
-shift $((OPTIND - 1))
 
-cat <<EOF
-VERSION: ${VERSION}
-core target: "${targets[core]}"
-release target: "${targets[release]}"
-build target: "${targets[build]}"
----------------------------------------------------------------
-EOF
-
-# elements["version"]="$(grep -Po "${PREFIX_RE}" <<< "$VERSION")"
-elements["core"]="$(grep -Po "${CORE_RE}" <<< "$VERSION")"
-elements["release"]="$(grep -Po "\-${RELEASE_RE}\\+" <<< "$VERSION" | sed 's/[-+]//g')"
-elements["build"]="$(grep -Po "\\+${BUILD_RE}$" <<< "$VERSION" | sed 's/[+]//g')"
-
-# schema=""
-for i in "${!elements[@]}"; do
-    IFS="." read -a identifiers <<< "${elements[i]}"
-    for y in "$(getSchemaElementIndices $i)"; do
-        echo $i : "$y"
-    done
-done
-
-declare -A lengths
-declare -A offsets
-lengths["core"]=$(getSchemaElementLength "core")
-lengths["release"]=$(getSchemaElementLength "release")
-lengths["build"]=$(getSchemaElementLength "build")
-lengths["total"]=$((${lengths["core"]} + ${lengths["release"]} + ${lengths["build"]}))
-offsets["core"]=0
-offsets["release"]=$((${lengths["core"]} - 1))
-offsets["build"]=$((${lengths["release"]} + ${offsets["release"]}))
-[[ -z $STITCH ]] && {
-    case "$STITCH" in
-        i) # only identifier #id
-        ;;
-        l) # element up to and including identifier # eltoid
-        ;;
-        e) # element # el
-        ;;
-        v) # across element boundaries up to and including identifier # vtoid
-        ;;
-        V) # the whole version # vtov
-        ;;
-        *)
-            stateError
-            ;;
-    esac
+# ---------------------- STANDARD AND USER DEFINED FUNCTIONS ------------
+# params
+# { string } format string %d%m...
+_date() {
+    local defaults=(
+        [0]="%a-%d-%m-%Y"
+        [1]="%Y%m%d"
+        [2]="%d%m%y"
+        [3]="%a%d%m%Y"
+    )
+    echo "$(date +"${defaults[2]}")"
 }
 
-echo "${lengths[@]}"
-echo "${offsets[@]}"
-
+main "$@"

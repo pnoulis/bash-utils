@@ -1,39 +1,46 @@
 #!/bin/bash
 
-# params
-# { string } format string %d%m...
-_date() {
-    local defaults=(
-        [0]="%a-%d-%m-%Y"
-        [1]="%Y%m%d"
-        [2]="%d%m%Y"
-        [3]="%a%d%m%Y"
-    )
-    if [[ -z "$1" || "$1" -lt ${#defaults[@]} ]]; then
-        echo "$(date +"${defaults[$1]}")"
-    else
-        echo "$(date "$1")"
-    fi
-}
 
-declare -a length
-declare -a offset
+# Utils
+# --------------------------------------- ##
+# Core[-PreRelease[+Build] | -PreRelease | +Build]
+PREFIX_RE="[vV]"
+CORE_RE="(?:0\.|[1-9]\d*\.){2}(?:0|[1-9]\d*)"
+RELEASE_RE="(?:(?:[-1-9][-0-9]*|[-a-zA-Z]*|0)\.)*(?:[-1-9][-0-9]*|[-a-zA-Z]*|0)"
+BUILD_RE="(?:[-a-zA-Z0-9]*\.)*[-a-zA-Z0-9]*"
+SEMVER_RE="^${PREFIX_RE}?${CORE_RE}(?:-${RELEASE_RE})?(?:\\+${BUILD_RE})?\$"
+
 declare -a elements
 bumpTarget=$((0))
+DEBUG=
+VALIDATE=
+STITCH=
+INPUT=
+PREFIX=
 
 main() {
+    declare -ag length
+    declare -ag offset
     length[0]=$(getSchemaElementLength "core")
     length[1]=$(getSchemaElementLength "release")
     length[2]=$(getSchemaElementLength "build")
-    length[3]=-1 # stitch length
+    length[3]=$((-1)) # stitch length
     length[4]=$((${length[0]} + ${length[1]} + ${length[2]})) # total length
     offset[0]=0
     offset[1]=$((${length[0]}))
     offset[2]=$((${offset[1]} + ${length[1]}))
-    offset[3]=-1 # stitch offset
+    offset[3]=$((-1)) # stitch offset
 
-    while getopts "crbMmps:" o; do
+    # redirection or pipe
+    if [[ -p /dev/stdin || ! -t 0 ]]; then
+        read -r INPUT
+    fi
+
+    while getopts "hcrbMmps:dv" o; do
         case "$o" in
+            h) # help
+                usage
+                ;;
             c) # core
                 bumpTarget=$((${offset[0]} + bumpTarget))
                 ;;
@@ -53,17 +60,41 @@ main() {
                 bumpTarget=$((2 + bumpTarget))
                 ;;
             s) # stitch
-                IFS=':' read offset[3] length[3] <<<$OPTARG
-                [ -z ${length[3]} ] && length[3]=${offset[3]}
-                offset[3]=$(getIndex $(decodeClarg ${offset[3]:0:1}) $(decodeClarg ${offset[3]:1:1}))
-                length[3]=$(getIndex $(decodeClarg ${length[3]:0:1}) $(decodeClarg ${length[3]:1:1}))
-                [[ ${length[3]} -lt ${offset[3]} ]] && stateError
+                STITCH="$OPTARG"
+                ;;
+            d) # debug
+                DEBUG=1
+                ;;
+            v) # validate
+                VALIDATE=1
                 ;;
             *)
                 ;;
         esac
     done
-    bump
+    shift $((OPTIND - 1))
+    (( $# > 0 )) && INPUT="$1"
+
+    [ -n "$STITCH" ] && calculateStitchRange
+    ((bumpTarget >= 0 )) && bump
+    ((VALIDATE == 1)) && validate "$INPUT"
+}
+
+# params
+# example: -scM-bp -> would register all identifiers up for stitches
+# example: -s -> stich up to bump target
+calculateStitchRange() {
+    [ $STITCH == '-' ] && {
+        offset[3]=0
+        length[3]=$bumpTarget
+        return 0
+    }
+    IFS='-' read offset[3] length[3] <<<"$STITCH_SPECIFIERS"
+    [ -z ${length[3]} ] && length[3]=${offset[3]}
+    offset[3]=$(getIndex $(decodeClarg ${offset[3]:0:1}) $(decodeClarg ${offset[3]:1:1}))
+    length[3]=$(getIndex $(decodeClarg ${length[3]:0:1}) $(decodeClarg ${length[3]:1:1}))
+    [[ ${length[3]} -lt ${offset[3]} ]] && stateError
+    return $?
 }
 
 # params
@@ -131,6 +162,7 @@ debug() {
 # { string } message
 stateError() {
     echo "error"
+    exit 1
 }
 # params
 # { any } a command line argument $1 {c | r | b | M | m | p | 0 | 1 | 2}
@@ -309,7 +341,7 @@ isEmpty() {
 
 # params
 # { string,... } identifiers
-function joinTokens {
+joinTokens() {
     local str=""
     local len=$#
     for (( i = 1; i < len; i++ )); do
@@ -321,14 +353,13 @@ function joinTokens {
 }
 
 bump() {
-    elements[0]="$(grep -Po "${CORE_RE}" <<< "$VERSION")"
-    elements[1]="$(grep -Po "\-${RELEASE_RE}\\+" <<< "$VERSION" | sed 's/[-+]//g')"
-    elements[2]="$(grep -Po "\\+${BUILD_RE}$" <<< "$VERSION" | sed 's/[+]//g')"
+    elements[0]="$(grep -Po "${CORE_RE}" <<< "$INPUT")"
+    elements[1]="$(grep -Po "\-${RELEASE_RE}\\+" <<< "$INPUT" | sed 's/[-+]//g')"
+    elements[2]="$(grep -Po "\\+${BUILD_RE}$" <<< "$INPUT" | sed 's/[+]//g')"
     EMPTY=
     BUMP=
     STITCH=
     RESET=
-    local tmp=
     # as in global index; the position of the current identifier within the full schema version.
     local gindex=
     for i in "${!elements[@]}"; do
@@ -342,7 +373,7 @@ bump() {
             isEmpty "${identifiers[$y]}"
             shouldReset $gindex
             shouldStitch $gindex
-            debug $gindex
+            (( DEBUG == 1 )) && debug $gindex
 
             if ((EMPTY == 1)); then
                 if ((STITCH == 1)); then
@@ -360,11 +391,52 @@ bump() {
                 identifiers[y]=$(stitch $(decodeClarg $i) $y)
             fi
         done
-        echo identifiers length ${#identifiers[@]}
-        elements[i]="${identifiers[@]}"
+
+        case $i in
+            1)
+                ;;
+            2)
+                ;;
+        esac
+        (( ${#identifiers[@]} > 0 )) && {
+            case $i in
+                0)
+                    elements[i]="$(joinTokens ${identifiers[@]})"
+                    ;;
+                1)
+                    elements[i]="-$(joinTokens ${identifiers[@]})"
+                    ;;
+                2)
+                    elements[i]="+$(joinTokens ${identifiers[@]})"
+                    ;;
+            esac
+        }
     done
-    debug 0 "show"
-    echo "${elements[@]}"
+    (( DEBUG == 1 )) && debug 0 "show"
+    echo "${elements[@]}" | sed 's/\s//g'
+}
+
+# params
+# { string } version string
+validate() {
+    echo "$(grep -Po "${SEMVER_RE}" <<< "$1" )"
+}
+
+
+# params
+# { string } format string %d%m...
+_date() {
+    local defaults=(
+        [0]="%a-%d-%m-%Y"
+        [1]="%Y%m%d"
+        [2]="%d%m%Y"
+        [3]="%a%d%m%Y"
+    )
+    if [[ -z "$1" || "$1" -lt ${#defaults[@]} ]]; then
+        echo "$(date +"${defaults[$1]}")"
+    else
+        echo "$(date "$1")"
+    fi
 }
 
 main "$@"
