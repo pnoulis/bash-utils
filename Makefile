@@ -7,7 +7,7 @@ srcdir := $(realpath .)
 # subdirectories should be appended to VPATH
 # VPATH := src
 
-scripts := $(shell find $(srcdir) -mindepth 1 -name '*.sh' -printf "%f ")
+scripts := $(shell find $(srcdir) -mindepth 1 -name tmp -prune -o -name '*.sh' -printf "%f ")
 scripts := $(addprefix $(bindir)/, $(scripts))
 
 .DEFAULT_GOAL: install
