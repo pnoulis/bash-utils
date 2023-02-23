@@ -2,5 +2,5 @@
 .#*
 # emacs undo tree files
 *.~undo-tree~
-tmp/
+tmp
 build/
