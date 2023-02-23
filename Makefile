@@ -20,7 +20,7 @@ distdir = $(srcdir)/dist
 distribution = $(distdir)/$(package_distname)
 ## Install
 DESTDIR ?=
-prefix = $(HOME)/bin
+prefix = $(HOME)
 exec_prefix = $(prefix)
 bindir = $(prefix)/bin
 
@@ -92,7 +92,7 @@ $(distribution): _FORCE
 distclean: clean
 	rm -rf $(distdir)/* .env config.log
 
-install: 
+install: build
 	-$(INSTALL) -d $(DESTDIR)$(bindir)
 	$(INSTALL) $(addprefix $(buildir)/, $(executables)) $(DESTDIR)$(bindir)
 
