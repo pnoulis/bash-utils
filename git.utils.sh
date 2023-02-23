@@ -83,3 +83,53 @@ function isGitClean() {
 
     return 0
 }
+
+# 
+#  @return {integer} 0 or 1
+#   0 - no unpushed commits
+#   1 - error or pushed commits
+# 
+gitNoUnpushedCommits() {
+    # input validation
+    ## 1. one parameter has been provided
+    [[ $# -eq 0 ]] && {
+        echo gitNoUnpushedCommits: Wrong number of arguments
+        exit 1
+    }
+
+    ## 2. that paremeter is not an empty string
+    [ -z "$1" ] && {
+        echo gitNoUnpushedCommits: Null string
+        exit 1
+    }
+
+    # make sure:
+    ## 1. is a path
+    ## 2. all nodes exist
+    ## 3. expand path
+    {
+        local tpath=$(realpath -qe "$1")
+    } || {
+        echo gitNoUnpushedCommits: "$1": No such file or directory
+        exit 1
+    }
+
+
+    # check
+    pushd "$tpath" > /dev/null
+    ## 1. provided argument is a git repository
+    {
+        git status >& /dev/null
+    } || {
+        echo gitNoUnpushedCommits: "$tpath": Not a git repository
+        exit 1
+    }
+
+    [[ "$(git status --short --branch --porcelain)" =~ ahead[[:space:]][0-9]+ ]] && {
+        echo gitNoUnpushedCommits: "$tpath": Unpushed commits
+        exit 1
+    }
+    popd >/dev/null
+
+    return 0
+}
