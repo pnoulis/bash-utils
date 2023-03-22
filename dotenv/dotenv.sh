@@ -159,6 +159,7 @@ main() {
     load_cmd_env
     switch_prefixes
     expand_envars
+    ENV["MODE"]=${MODE}
     write_env
 }
 
