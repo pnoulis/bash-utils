@@ -38,6 +38,7 @@ vctree_state := $(shell git status -z | wc -w | while read n; do \
 	fi; \
 	done)
 
+all: build
 .PHONY: build
 build: $(addprefix $(buildir)/, $(executables))
 
