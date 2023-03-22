@@ -6,7 +6,7 @@ EXECDIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)
 
 # Options
 PKGDIR=
-ENVDIR=${PKGDIR}/config/env
+ENVDIR=
 MODE=development
 declare -gA SWITCH_PREFIXES=()
 
@@ -147,6 +147,7 @@ main() {
     fi
     PKGDIR=$(realpath "${PKGDIR}")
     cd -- "${PKGDIR}" || die "Could not cd into PKGDIR:${PKGDIR}"
+    ENVDIR=${ENVDIR:-${PKGDIR}/config/env}
     if [[ -z "${ENVDIR:-}" ]]; then
         die "Missing \$ENVDIR"
     fi
