@@ -10,7 +10,7 @@ package_distname := $(package)-$(package_version)
 ## Anchors
 srcdir = .
 abs_srcdir = $(realpath .)
-VPATH = tmp
+VPATH = tmp dotenv
 ## Build
 buildir = $(srcdir)/build
 abs_buildir = $(abs_srcdir)/build
@@ -37,8 +37,6 @@ vctree_state := $(shell git status -z | wc -w | while read n; do \
 		echo dirty; \
 	fi; \
 	done)
-
-all: build
 
 .PHONY: build
 build: $(addprefix $(buildir)/, $(executables))

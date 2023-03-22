@@ -3,7 +3,14 @@
 set -o errexit
 
 EXECDIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)
-PKGDIR=$EXECDIR
+
+# Options
+PKGDIR=
+ENVDIR=${PKGDIR}/config/env
+MODE=development
+declare -gA SWITCH_PREFIXES=()
+
+# Loaded environment
 declare -gA ENV=()
 
 usage() {
@@ -39,7 +46,8 @@ ${0} was created with the intented goals of:
   2. loading of local envars files
   3. loading of cmd envars
   4. expansion
-  5. writting out the loaded environment
+  5. prefix switch
+  6. writting out the loaded environment
 
   --- 1. Loading of the static environment
   Static envars files are those that are usually commited in a repository.
@@ -100,7 +108,10 @@ ${0} was created with the intented goals of:
 
   * Notice how the expansion supports defaults in the case of a missing environment
 
-  -- 5. Writting out the loaded environment.
+  --- 5. Prefix switch
+  Switches prefixes or adds a prefix.
+
+  --- 6. Writting out the loaded environment.
   ${0} First truncates and then writes the loaded enviroment at the <project_root>/.env
 
   The project root is specified through the paramater --pkgdir.
@@ -113,7 +124,7 @@ ${0} was created with the intented goals of:
              or the process envar ENVDIR
     --pkgdir - The root directory of the package / application.
              or the process envar PKGDIR
-    --envprefixes - a key value pair conforming to the syntax:
+    --switch-prefixes - a key value pair conforming to the syntax:
               <key>:<value>,<key>:<value>,...
               keys are used to filter a subset of the available
               environment and values are used to replace the key
@@ -129,48 +140,65 @@ EOF
 main() {
     parse_args "$@"
     set -- "${POSARGS[@]}"
-    # if [[ ! -d "${ENVDIR:-}" ]]; then
-    #     die "envdir: ${ENVDIR} missing"
-    # fi
+
+    # If PKGDIR or ENVDIR do not pass tests exit
+    if [[ -z "${PKGDIR:-}" ]]; then
+        die "Missing \$PKGDIR"
+    fi
+    PKGDIR=$(realpath "${PKGDIR}")
+    cd -- "${PKGDIR}" || die "Could not cd into PKGDIR:${PKGDIR}"
+    if [[ -z "${ENVDIR:-}" ]]; then
+        die "Missing \$ENVDIR"
+    fi
+    ENVDIR=$(realpath "${ENVDIR}")
+    cd -- "${ENVDIR}" || die "Could not cd into ENVDIR:${ENVDIR}"
+
     load_static_env
     load_local_env
     load_cmd_env
-    filter_prefix
-    # expand_envars
-    # write_env
+    switch_prefixes
+    expand_envars
+    write_env
 }
 
 ensure_newline() {
     find . -mindepth 1 -type f -iregex '.*env.*' | xargs -I {} sed -i -e '$a\' {}
 }
 
-filter_prefix() {
-    if (( "${#ENV_PREFIXES[@]}" == 0 )); then
+switch_prefixes() {
+    if (( "${#SWITCH_PREFIXES[@]}" == 0 )); then
         return
     fi
     local -A filtered=()
+    local newkey
+    local prefixed
     for envar in "${!ENV[@]}"; do
-        for filter in "${!ENV_PREFIXES[@]}"; do
-            if [[ "${envar:-}" =~ .*${filter:-}.* ]]; then
-                echo "${envar/${filter}/${ENV_PREFIXES[$filter]}}"
-                filtered[$envar]=${ENV[$envar]}
+        prefixed=0
+        for filter in "${!SWITCH_PREFIXES[@]}"; do
+            newkey=
+            if [[ "$filter" == 'add' ]]; then
+                newkey="${SWITCH_PREFIXES[$filter]}${envar}"
+                filtered[$newkey]=${ENV[$envar]}
+                envar=${newkey}
+                prefixed=1
+                break
+            elif [[ "${envar:-}" =~ "$filter" ]]; then
+                newkey="${envar/$filter/${SWITCH_PREFIXES[$filter]}}"
+                filtered[$newkey]=${ENV[$envar]}
+                envar=${newkey}
+                prefixed=1
+                break
             fi
-            # if [[ "${filter:-}" == "${envar:-}" ]]; then
-            #     echo $envar
-            #     filtered[$envar]=${ENV[$envar]}
-            #     continue
-            # fi
         done
+        if (( !$prefixed )); then
+            filtered[$envar]=${ENV[$envar]}
+        fi
     done
-    echo "${!filtered[@]}"
-    echo "${filtered[@]}"
-    # for i in "${!ENV_PREFIXES[@]}"; do
-    #     if [[ "${i:-}" == "${1}" ]]; then
-    #         return 0
-    #     else
-    #         return 1
-    #     fi
-    # done
+    unset ENV || die "failed to unset ENV in switch_prefixes"
+    declare -gA ENV
+    for i in "${!filtered[@]}"; do
+        ENV[$i]=${filtered[$i]}
+    done
 }
 
 expand_envars() {
@@ -208,28 +236,37 @@ load_local_env() {
         done < "./.env.local"
     fi
     case "${MODE:-}" in
-        development)
+        dev | development)
             if [[ -f './.env.development.local' ]]; then
                 while IFS== read -r key value; do
-                    if [[ -z "${key:-}" ]]; then
-                        continue
-                    fi
                     ENV["$key"]="$value"
                 done < "./.env.development.local"
+            elif [[ -f './.env.dev.local' ]]; then
+                while IFS== read -r key value; do
+                    ENV["$key"]="$value"
+                done < "./.env.dev.local"
             fi
             ;;
-        staging)
+        stag | staging)
             if [[ -f './.env.staging.local' ]]; then
                 while IFS== read -r key value; do
                     ENV[$key]=$value
                 done < "./.env.staging.local"
+            elif [[ -f './.env.stag.local' ]]; then
+                while IFS== read -r key value; do
+                    ENV["$key"]="$value"
+                done < "./.env.stag.local"
             fi
             ;;
-        production)
+        prod | production)
             if [[ -f './.env.production.local' ]]; then
                 while IFS== read -r key value; do
                     ENV[$key]=$value
                 done < "./.env.production.local"
+            elif [[ -f './.env.prod.local' ]]; then
+                while IFS== read -r key value; do
+                    ENV[$key]=$value
+                done < "./.env.prod.local"
             fi
             ;;
         *)
@@ -245,25 +282,37 @@ load_static_env() {
         ENV[$key]=$value
     done < "./env"
     case "${MODE:-}" in
-        development)
+        dev | development)
             if [[ -f './env.development' ]]; then
                 while IFS== read -r key value; do
                     ENV[$key]=$value
                 done < "./env.development"
+            elif [[ -f "./env.dev" ]]; then
+                while IFS== read -r key value; do
+                    ENV[$key]=$value
+                done < "./env.dev"
             fi
             ;;
-        staging)
+        stag | staging)
             if [[ -f './env.staging' ]]; then
                 while IFS== read -r key value; do
                     ENV[$key]=$value
                 done < "./env.staging"
+            elif [[ -f "./env.stag" ]]; then
+                while IFS== read -r key value; do
+                    ENV[$key]=$value
+                done < "./env.stag"
             fi
             ;;
-        production)
+        prod | production)
             if [[ -f './env.production' ]]; then
                 while IFS== read -r key value; do
                     ENV[$key]=$value
                 done < "./env.production"
+            elif [[ -f "./env.prod" ]]; then
+                while IFS== read -r key value; do
+                    ENV[$key]=$value
+                done < "./env.prod"
             fi
             ;;
         *)
@@ -278,16 +327,21 @@ parse_args() {
         case "${1:-}" in
             -m | --mode*)
                 MODE=$(OPTIONAL=0 parse_param "$@") || shift $?
-                MODE=${MODE:-development}
+                ;;
+            --pkgdir*)
+                PKGDIR=$(parse_param "$@") || shift $?
                 ;;
             --envdir*)
                 ENVDIR=$(parse_param "$@") || shift $?
                 ;;
-            --envprefixes*)
-                declare -gA ENV_PREFIXES=()
+            --switch-prefixes*)
                 local params=$(parse_param "$@") || shift $?
                 while read -d',' -r pair; do
-                    ENV_PREFIXES[${pair%%:*}]=${pair##*:}
+                    if [[ -z "${pair%%:*}" ]]; then
+                        SWITCH_PREFIXES["add"]=${pair##*:}
+                    else
+                        SWITCH_PREFIXES[${pair%%:*}]=${pair##*:}
+                    fi
                 done <<<"${params},"
                 ;;
             --debug)
