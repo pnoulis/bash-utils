@@ -7,7 +7,7 @@ EXECDIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)
 # Options
 PKGDIR=
 ENVDIR=
-MODE=development
+MODE=
 declare -gA SWITCH_PREFIXES=()
 
 # Loaded environment
@@ -141,6 +141,8 @@ main() {
     parse_args "$@"
     set -- "${POSARGS[@]}"
 
+    MODE=${MODE:=dev}
+
     # If PKGDIR or ENVDIR do not pass tests exit
     if [[ -z "${PKGDIR:-}" ]]; then
         die "Missing \$PKGDIR"
@@ -205,6 +207,10 @@ switch_prefixes() {
 
 expand_envars() {
     set -o allexport
+    for i in "${!ENV[@]}"; do
+        export ${i}=${ENV[$i]}
+    done
+
     for i in "${!ENV[@]}"; do
         declare "${i}"=$(eval echo "${ENV[$i]}")
         ENV[$i]=$(eval echo "${ENV[$i]}")
@@ -406,4 +412,3 @@ die() {
 }
 
 main "$@"
-
