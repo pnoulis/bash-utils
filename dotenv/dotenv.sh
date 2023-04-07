@@ -8,6 +8,7 @@ EXECDIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)
 PKGDIR=
 ENVDIR=
 MODE=
+CLIENV=
 declare -gA SWITCH_PREFIXES=()
 
 # Loaded environment
@@ -141,6 +142,10 @@ main() {
     parse_args "$@"
     set -- "${POSARGS[@]}"
 
+    echo "${CLIENV}"
+    split_clienv
+    write_env
+    exit
     MODE=${MODE:=dev}
 
     # If PKGDIR or ENVDIR do not pass tests exit
@@ -163,6 +168,12 @@ main() {
     expand_envars
     ENV["MODE"]=${MODE}
     write_env
+}
+
+split_clienv() {
+    while IFS=';' read -r -d';' key; do
+        ENV["${key%%=*}"]="${key##*=}"
+    done <<<"${CLIENV}"
 }
 
 ensure_newline() {
@@ -225,12 +236,17 @@ load_cmd_env() {
             ENV[$i]=${ENV[$i]}
         fi
     done
+
+    while IFS=';' read -r -d';' key; do
+        ENV["${key%%=*}"]="${key##*=}"
+    done <<<"${CLIENV}"
 }
 
 write_env() {
     cd $PKGDIR
     cat /dev/null > .env
     for i in "${!ENV[@]}"; do
+        echo "$i"
         echo "${ENV_PREFIX:-}${i}=${ENV[$i]}" >> .env
     done
 }
@@ -338,6 +354,9 @@ parse_args() {
                 ;;
             -t | --target*)
                 TARGET=$(parse_param "$@") || shift $?
+                ;;
+            -e | --environment*)
+                CLIENV=$(parse_param "$@") || shift $?
                 ;;
             --pkgdir*)
                 PKGDIR=$(parse_param "$@") || shift $?
