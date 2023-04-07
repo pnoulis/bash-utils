@@ -336,6 +336,9 @@ parse_args() {
             -m | --mode*)
                 MODE=$(OPTIONAL=0 parse_param "$@") || shift $?
                 ;;
+            -t | --target*)
+                TARGET=$(parse_param "$@") || shift $?
+                ;;
             --pkgdir*)
                 PKGDIR=$(parse_param "$@") || shift $?
                 ;;
