@@ -8,6 +8,8 @@ EXECDIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)
 PKGDIR=.
 ENVDIR=.
 MODE=production
+BUILD=
+HOST=
 TARGET=
 CLIENV=
 declare -gA SWITCH_PREFIXES=()
@@ -127,10 +129,11 @@ ${0} was created with the intented goals of:
     -m, --mode - config mode
              If --mode is not provided the script looks for a value
              through the process envar MODE
-    -t, --target - target environment
-             The GNU configure parameters are:
+    --build - build machine
              --build= -> the machine currently building the program
+    --host - host machine
              --host= -> the machine that shall host the binary
+    --target - target machine
              --target= -> the machine that the binary has been compiled for.
     -e, --environment='key=value;'
              Each key value pair denotes an environment variable.
@@ -184,6 +187,8 @@ load_clienv() {
     done <<<"${CLIENV}"
 
     ENV['MODE']=${MODE}
+    ENV['BUILD']=${BUILD}
+    ENV['HOST']=${HOST}
     ENV['TARGET']=${TARGET}
 }
 
@@ -358,7 +363,13 @@ parse_args() {
             -m | --mode*)
                 MODE=$(OPTIONAL=0 parse_param "$@") || shift $?
                 ;;
-            -t | --target*)
+            --build*)
+                BUILD=$(parse_param "$@") || shift $?
+                ;;
+            --host*)
+                HOST=$(parse_param "$@") || shift $?
+                ;;
+            --target*)
                 TARGET=$(parse_param "$@") || shift $?
                 ;;
             -e | --environment*)
