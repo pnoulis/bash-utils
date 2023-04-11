@@ -186,10 +186,22 @@ load_clienv() {
         ENV["${key%%=*}"]="${key##*=}"
     done <<<"${CLIENV}"
 
-    ENV['MODE']=${MODE}
-    ENV['BUILD']=${BUILD}
-    ENV['HOST']=${HOST}
-    ENV['TARGET']=${TARGET}
+    if [[ -n "${MODE:-}" ]]; then
+        ENV['MODE']=${MODE}
+    fi
+
+    if [[ -n "${BUILD:-}" ]]; then
+        ENV['BUILD']=${BUILD}
+    fi
+
+    if [[ -n "${HOST:-}" ]]; then
+        ENV['HOST']=${HOST}
+    fi
+
+    if [[ -n "${TARGET:-}" ]]; then
+        ENV['TARGET']=${TARGET}
+    fi
+
 }
 
 ensure_newline() {
