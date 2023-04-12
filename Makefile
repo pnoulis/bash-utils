@@ -10,7 +10,7 @@ package_distname := $(package)-$(package_version)
 ## Anchors
 srcdir = .
 abs_srcdir = $(realpath .)
-VPATH = tmp dotenv
+VPATH = tmp dotenv watcher
 ## Build
 buildir = $(srcdir)/build
 abs_buildir = $(abs_srcdir)/build
