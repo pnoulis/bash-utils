@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 SRCDIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)
+EXECDIR=$(pwd)
 
 # Positional parameters
 WATCHFILE=
@@ -17,14 +18,24 @@ main() {
 
     ONCHANGE="$2"
 
+    local basename="${WATCHFILE##*/}"
+    local -A exclude=()
+    exclude["git"]="${basename}/\.git"
+    exclude["build"]="${basename}/build"
+    exclude["dist"]="${basename}/dist"
+    exclude["node_modules"]="${basename}/node_modules"
+    exclude["tests"]="${basename}/tests?"
+    exclude["docs"]="${basename}/docs?"
+    exclude["tmp"]="${basename}/tmp"
+    local regexExclude=$(echo "${exclude[@]}" | tr [[:space:]] '\|' | sed 's/.$//')
+
     inotifywait --recursive \
                 --monitor \
                 --event modify,move,create,delete \
-                --excludei "\.git|build|dist|tmp" \
-                -q \
+                --excludei "$regexExclude" \
                 "${WATCHFILE}" \
                 | while read change; do
-        exec ${ONCHANGE}
+        echo "$change"
         done
 }
 
