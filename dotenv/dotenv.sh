@@ -170,6 +170,12 @@ load_file_env() {
     local envfile=$1
     if [[ -s $envfile ]]; then
         while IFS='=' read -r key value; do
+
+            # Ignore empty lines
+            if [[ -z "${key:-}" ]]; then
+                continue
+            fi
+
             # In case the key is of the form: '$KEY'
             # That is interpreted to mean that the user
             # wants to clone some environemnt variable
