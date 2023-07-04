@@ -1,407 +1,322 @@
 #!/usr/bin/env bash
 
-set -o errexit
-
-EXECDIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)
-
-# Options
-PKGDIR=.
-ENVDIR=.
-MODE=production
-BUILD=
-HOST=
-TARGET=
-CLIENV=
-declare -gA SWITCH_PREFIXES=()
-
-# Loaded environment
-declare -gA ENV=()
-
 usage() {
     cat <<EOF
-${0} was created with the intented goals of:
+${0} reads, expands and transforms environment variables.
 
-     1. Decouple the loading of the environment from any
-     one specific build system, library or language thus
-     decreasing external dependencies.
+  Dotenv implementation's abound in the developer community across all languages
+  and paradigms. This dotenv implementation was designed specifically to
+  decouple the very common requirement of gathering envars from a variety of
+  sources from any specific language or tool. Bash achieves at least partically
+  that decoupling, because it is a tool that is widely used most often adopting
+  the role of the least common denominator.
 
-     2. Separate the configuration stage from the build stage
-     following the 12 factor app guidelines: https://12factor.net/
+[USAGE]: ${0} [OPTION...] file1 dir1 dir2 file2...
 
-     2. Assist the developer by removing at least one headache.
-     The headache being having to use search for a new way
-     to load the environment every time a new tool is used
-     because it is not compatible with the old.
+  Read envars from each file in the order they appear provided as a positional
+  parameter. Duplicated envars are replaced by the most recently read
+  definition.
 
-     4. Have the envars available at an early stage in the build
-     procedure so that multiple tools or runtimes may utilize them.
+  If any of the positional arguments is a directory instead of a file then the
+  directory is expected to hold environment variables presets. An envar preset
+  is a file used to keep environment variable definitions. The filename that
+  matches the MODE is loaded to form part of the environment of the current run.
 
-     5. Gather all of the environment in its possible permutations
-     dev,prod,staging,... into a single file. The dependents then
-     only need to load that file and it makes it easier for the
-     developer to inspect it.
-
-[BEHAVIOR]:
-  ${0} needs to be provided with its parameters otherwise it exits
-  with an error.
-
-  Dotenv categorizes the loading of the environment in three stages.
-  1. loading of static envars files
-  2. loading of local envars files
-  3. loading of process environment
-  4. loading of cli environment
-  5. expansion
-  6. prefix switch
-  7. writting out the loaded environment
-
-  --- 1. Loading of the static environment
-  Static envars files are those that are usually commited in a repository.
-  ${0} looks for these in the --envdir directory and loads them according
-  to the --mode specified.
-
-  For example:
-  If the --mode=(dev || development)
-
-  ${0} will load:
-  env
-  env.[dev|development]
-
-  If an envar has been defined twice in both of these files that the moded file
-  takes priority.
-
-  * Notice how the files under --envdir are not hidden. Why should they? They are
-  made globally available through the use of public cloud repositories.
-
-  ${0} defines the following modes:
-  1. dev | development
-  2. stag | staging
-  3. prod | production
-
-  More can easily be added.
-
-  --- 2. Loading of the local environment
-  Local envars are those that are not commited in a repository. They are
-  usefull for keeping sensitive information and overriding the pre-configured
-  environments.
-  ${0} Looks for these in the --pkgdir which corresponds to the root directory
-  of your project.
-
-  They are loaded in the same order as static envar files according to the --mode
-
-  .env
-  .env[dev|development]
-
-  * Notice how these files are expected to be dotfiles (hidden). Not so much to
-  keep them safe but rather to declutter the view.
-
-  --- 3. Loading of the process enviroment
-  Environment variables that have already been loaded at this stage are replaced
-  by those inherited from the parent process environment. Therefore if an envar
-  is not already part of the ENV map it shall not be copied.
-
-  --- 4. Loading of the cli environment
-  Specifically all envars declared through the parameter -e are loaded.
-  The MODE and TARGET variables are also made part of the ENV at this point in time.
-
-  --- 5. Expansion
-  It is sometimes usefull to be able to construct an envar by referering other
-  envars which may have been already defined or will be at some later loading stage.
-
-  Example:
-  SOME_ENV=basic
-  SOME_ENV_EXPANDED=${SOME_ENV}_expansion
-  SOME_ENV_DEFAULT=${MISSING_ENV:-yolo}_expansion
-
-  * Notice how the expansion supports defaults in the case of a missing environment
-
-  --- 6. Prefix switch
-  Switches prefixes or adds a prefix.
-
-  --switch-prefixes='one:two,three:four'
-  --switch-prefixes='one:two'
-
-  --- 7. Writting out the loaded environment.
-  ${0} First truncates and then writes the loaded enviroment at the <project_root>/.env
-
-  The project root is specified through the paramater --pkgdir.
-
-[USAGE]: ${0} [OPTION]
-    -m, --mode - config mode
-             If --mode is not provided the script looks for a value
-             through the process envar MODE
-    --build - build machine
-             --build= -> the machine currently building the program
-    --host - host machine
-             --host= -> the machine that shall host the binary
-    --target - target machine
-             --target= -> the machine that the binary has been compiled for.
-    -e, --environment='key=value;'
-             Each key value pair denotes an environment variable.
-             Each pair is separated by a semicolon ';'
-    --envdir - The root directory of the environment variable files
-             or the process envar ENVDIR
-    --pkgdir - The root directory of the package / application.
-             or the process envar PKGDIR
-    --switch-prefixes - a key value pair conforming to the syntax:
-              <key>:<value>,<key>:<value>,...
-              keys are used to filter a subset of the available
-              environment and values are used to replace the key
-              in the output file.
-              see [EXAMPLES]
-    -h, --help - Show this message
+  -m, --mode - Environment presets mode
+        By default --mode=production
+  -e, --environment - Define environment variables
+  -p, --inherit-process
+        By defaut the process environment is not loaded, althought it is used
+        for expanding environment variables. With -p the parent's process
+        environment is included in the output.
+  -s, --switch-prefixes
+        Adds or replaces a substring from each environment variable key loaded.
+  -h, --help - Show this message
 
 [EXAMPLES]:
 
+  #1) Given the command:
+
+  ${0} --mode=production .
+
+  (assuming that . is a presets directory)
+  presets_dir/
+  presets_dir/env
+  presets_dir/env.production
+  presets_dir/env.development
+
+  Then ${0} shall load in order:
+  presets_dir/env
+  presets_dir/.env
+  presets_dir/env.production
+  presets_dir/.env.production
+
+  Any of these environment preset files might be missing without causing
+  an error.
+
+  #2) Given the command:
+
+  ${0} --switch-prefixes="FRONTEND=REACT;=BACKEND" .
+
+  Given the environment variable set:
+  FRONTEND_ONE=something
+  FRONTEND_TWO=something
+  THREE=something
+  FOUR=something
+
+  The output is:
+  REACT_ONE=something
+  REACT_TWO=something
+  BACKEND_ONE=something
+  BACKEND_ONE=something
+
+  #3) Given the command:
+
+  ${0} --environment="$USER;ONE=$HOME" .
+
+  Given the environment variable set inherited from the process:
+  USER=pnoul
+  HOME=/home/pnoul
+
+  The output is:
+  USER=pnoul
+  ONE=/home/pnoul
+
+  Notice how $USER within --environment is not provided with a value. If no
+  value is provided and the key is prefixed with $ then that envar is to be
+  cloned by the environment defined so far.
+
 EOF
 }
+
+# Options
+# parameter
+# -m --mode=
+MODE=production
+# parameter
+# -e --environment=
+CLIENV=
+# parameter
+# --switch-prefixes=
+declare -gA SWITCH_PREFIXES=()
+# flag
+# -p --inherit-process
+declare -gA PROCENV=()
+# positional arguments
+# $@ file1 dir1 dir2 file2...
+
+# ------------------------------ PROGRAM START ------------------------------ #
+trap 'exit 1' 10
+declare -g PROC=$$
+# Exit script on error
+set -o errexit
+EXECDIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)
+declare -gA ENV=()
 
 main() {
     parse_args "$@"
     set -- "${POSARGS[@]}"
 
-    # If PKGDIR or ENVDIR do not pass tests exit
-    if [[ -z "${PKGDIR:-}" ]]; then
-        die "Missing \$PKGDIR"
-    fi
-    PKGDIR=$(realpath "${PKGDIR}")
-    cd -- "${PKGDIR}" || die "Could not cd into PKGDIR:${PKGDIR}"
-    ENVDIR=${ENVDIR:-${PKGDIR}/config/env}
-    if [[ -z "${ENVDIR:-}" ]]; then
-        die "Missing \$ENVDIR"
-    fi
-    ENVDIR=$(realpath "${ENVDIR}")
-    cd -- "${ENVDIR}" || die "Could not cd into ENVDIR:${ENVDIR}"
+    load_process_env
+    load_cli_env
 
-    load_static_env
-    load_local_env
-    load_proc_env
-    load_clienv
-    expand_envars
-    switch_prefixes
-    write_env
-}
-
-load_clienv() {
-    while IFS=';' read -r -d';' key; do
-        ENV["${key%%=*}"]="${key##*=}"
-    done <<<"${CLIENV}"
-
-    if [[ -n "${MODE:-}" ]]; then
-        ENV['MODE']=${MODE}
-    fi
-
-    if [[ -n "${BUILD:-}" ]]; then
-        ENV['BUILD']=${BUILD}
-    fi
-
-    if [[ -n "${HOST:-}" ]]; then
-        ENV['HOST']=${HOST}
-    fi
-
-    if [[ -n "${TARGET:-}" ]]; then
-        ENV['TARGET']=${TARGET}
-    fi
-
-}
-
-ensure_newline() {
-    find . -mindepth 1 -type f -iregex '.*env.*' | xargs -I {} sed -i -e '$a\' {}
-}
-
-switch_prefixes() {
-    if (( "${#SWITCH_PREFIXES[@]}" == 0 )); then
-        return
-    fi
-    local -A filtered=()
-    local newkey
-    local prefixed
-    for envar in "${!ENV[@]}"; do
-        prefixed=0
-        for filter in "${!SWITCH_PREFIXES[@]}"; do
-            newkey=
-            if [[ "$filter" == 'add' ]]; then
-                newkey="${SWITCH_PREFIXES[$filter]}${envar}"
-                filtered[$newkey]=${ENV[$envar]}
-                envar=${newkey}
-                prefixed=1
-                break
-            elif [[ "${envar:-}" =~ "$filter" ]]; then
-                newkey="${envar/$filter/${SWITCH_PREFIXES[$filter]}}"
-                filtered[$newkey]=${ENV[$envar]}
-                envar=${newkey}
-                prefixed=1
-                break
-            fi
-        done
-        if (( !$prefixed )); then
-            filtered[$envar]=${ENV[$envar]}
+    # load POSARGS environment
+    for f in "$@"; do
+        # expand path
+        f=$(realpath $f 2>/dev/null)
+        if ! [[ -r $f ]]; then
+            # if path does not exist or is not readable
+            fatal $f does not exist or not readable!
+        elif [[ -d $f ]]; then
+            # if directory
+            load_preset_env $f
+        elif [[ -f $f ]]; then
+            # if file
+            load_file_env $f
         fi
     done
-    unset ENV || die "failed to unset ENV in switch_prefixes"
-    declare -gA ENV
-    for i in "${!filtered[@]}"; do
-        ENV[$i]=${filtered[$i]}
+    env_to_stdout
+}
+
+# write env to stdout
+env_to_stdout() {
+    for i in ${!ENV[@]}; do
+        echo $i=${ENV[$i]}
     done
 }
 
-expand_envars() {
-    set -o allexport
-    for i in "${!ENV[@]}"; do
-        export ${i}=${ENV[$i]}
-    done
+# load preset environment
+load_preset_env() {
+   local envdir=$1
 
-    for i in "${!ENV[@]}"; do
-        declare "${i}"=$(eval echo "${ENV[$i]}")
-        ENV[$i]=$(eval echo "${ENV[$i]}")
-    done
+   # env presets should not be hidden but
+   # if they are they take precedence over
+   # in plain sight presets
+
+   # read default preset
+   load_file_env $envdir/env
+   load_file_env $envdir/.env
+
+   # read $MODE preset
+   load_file_env $envdir/env.$MODE
+   load_file_env $envdir/.env.$MODE
 }
 
-load_proc_env() {
-    for i in "${!ENV[@]}"; do
-        if [[ -n "${!i}" ]]; then
-            ENV[$i]=${!i}
+# load file environment
+load_file_env() {
+    local envfile=$1
+    if [[ -s $envfile ]]; then
+        while IFS='=' read -r key value; do
+            # In case the key is of the form: '$KEY'
+            # That is interpreted to mean that the user
+            # wants to clone some environemnt variable
+            # that is found either in ENV or PROCENV
+            if [[ $key =~ ^\$ ]]; then
+                value=$key
+                key=${key#?}
+            fi
+            ENV[$(switch_prefix $key)]=$(expand_envar $value)
+        done < $envfile
+    fi
+}
+
+# parent process environment
+load_process_env() {
+    while IFS='=' read -r key value; do
+        PROCENV[$key]=$value
+    done < <(cat "/proc/$$/environ" | tr '\0' '\n')
+}
+
+# command line parameter --environment
+load_cli_env() {
+    if [[ -n "${CLIENV:-}" ]]; then
+        while IFS='=' read -r key value; do
+            # In case the key is of the form: $KEY
+            # That is interpreted to mean that the user
+            # wants to clone some environemnt variable
+            # that is found either in ENV or PROCENV
+            if [[ $key =~ ^\$ ]]; then
+                value=$key
+                key=${key#?}
+            fi
+            ENV[$(switch_prefix $key)]=$(expand_envar $value)
+        done < <(echo "$CLIENV" | tr ';' '\n')
+    fi
+}
+
+# expand environment variable
+expand_envar() {
+    local enval=$1
+    local -a vars=($(parse_envar $enval))
+
+    let i=0
+    local key=""
+    local value=""
+    local expanded=""
+    while (( i < ${#vars[@]} )); do
+        key=${vars[$i]}
+        if [[ $key =~ \{.*\}$ ]]; then
+            # index $i references an expandable envar of the form ${envar}
+            key=${key#??} # remove ${
+            key=${key%?} # remove }
+        elif [[ $key =~ ^\$ ]]; then
+            # index $i references an expandable envar of the form $envar
+            key=${key#?} # remove $
         else
-            ENV[$i]=${ENV[$i]}
+            # index $i does not reference an expandable envar
+            expanded+=${key}
+            ((i++))
+            continue
         fi
+        # Fist try and expand the variable from ENV
+        value=${ENV[$key]}
+        # If value was not expanded try PROCENV
+        if [[ -z "${value:-}" ]]; then
+            value=${PROCENV[$key]}
+        fi
+        # If the value remains unexpanded throw an error
+        if [[ -z "${value:-}" ]]; then
+            fatal "Failed expansion" ${vars[$i]}
+        fi
+        expanded+=$value
+        ((i++))
     done
+
+    echo $expanded
 }
 
-write_env() {
-    cd $PKGDIR
-    cat /dev/null > .env
-    for i in "${!ENV[@]}"; do
-        echo "${ENV_PREFIX:-}${i}=${ENV[$i]}" >> .env
+# Break down environment variable value into constituent parts
+parse_envar() {
+    envar=$1
+    let i=0
+    let y=0
+    vars=()
+    char=
+    let varstart=0
+
+    while (( i < ${#envar} )); do
+        char=${envar:$i:1}
+        case $char in
+            \$ | \})
+                if (( varstart )); then
+                    vars[$y]+=$char
+                    varstart=0
+                else
+                    vars+=($char)
+                    varstart=1
+                fi
+                if (( i > 0 )); then
+                    ((y++))
+                fi
+                ;;
+            *)
+                vars[$y]+=$char
+                ;;
+        esac
+        ((i++))
     done
+    echo "${vars[*]}"
 }
 
-load_local_env() {
-    cd $PKGDIR
-    ensure_newline
-    if [[ -f "./.env.local" ]]; then
-        while IFS== read -r key value; do
-            ENV[$key]=$value
-        done < "./.env.local"
-    fi
-    case "${MODE:-}" in
-        dev | development)
-            if [[ -f './.env.development.local' ]]; then
-                while IFS== read -r key value; do
-                    ENV["$key"]="$value"
-                done < "./.env.development.local"
-            elif [[ -f './.env.dev.local' ]]; then
-                while IFS== read -r key value; do
-                    ENV["$key"]="$value"
-                done < "./.env.dev.local"
-            fi
-            ;;
-        stag | staging)
-            if [[ -f './.env.staging.local' ]]; then
-                while IFS== read -r key value; do
-                    ENV[$key]=$value
-                done < "./.env.staging.local"
-            elif [[ -f './.env.stag.local' ]]; then
-                while IFS== read -r key value; do
-                    ENV["$key"]="$value"
-                done < "./.env.stag.local"
-            fi
-            ;;
-        prod | production)
-            if [[ -f './.env.production.local' ]]; then
-                while IFS== read -r key value; do
-                    ENV[$key]=$value
-                done < "./.env.production.local"
-            elif [[ -f './.env.prod.local' ]]; then
-                while IFS== read -r key value; do
-                    ENV[$key]=$value
-                done < "./.env.prod.local"
-            fi
-            ;;
-        *)
-            die "Unrecognized mode:${MODE:-}"
-            ;;
-    esac
-}
-
-load_static_env() {
-    cd $ENVDIR
-    ensure_newline
-    while IFS== read -r key value; do
-        ENV[$key]=$value
-    done < "./env"
-    case "${MODE:-}" in
-        dev | development)
-            if [[ -f './env.development' ]]; then
-                while IFS== read -r key value; do
-                    ENV[$key]=$value
-                done < "./env.development"
-            elif [[ -f "./env.dev" ]]; then
-                while IFS== read -r key value; do
-                    ENV[$key]=$value
-                done < "./env.dev"
-            fi
-            ;;
-        stag | staging)
-            if [[ -f './env.staging' ]]; then
-                while IFS== read -r key value; do
-                    ENV[$key]=$value
-                done < "./env.staging"
-            elif [[ -f "./env.stag" ]]; then
-                while IFS== read -r key value; do
-                    ENV[$key]=$value
-                done < "./env.stag"
-            fi
-            ;;
-        prod | production)
-            if [[ -f './env.production' ]]; then
-                while IFS== read -r key value; do
-                    ENV[$key]=$value
-                done < "./env.production"
-            elif [[ -f "./env.prod" ]]; then
-                while IFS== read -r key value; do
-                    ENV[$key]=$value
-                done < "./env.prod"
-            fi
-            ;;
-        *)
-            die "Unrecognized mode:${MODE:-}"
-            ;;
-    esac
+# prefix switch
+switch_prefix() {
+    local envkey=$1
+    while IFS='=' read -r key value; do
+        if [[ -z "${key:-}" ]]; then
+            envkey=$value$envkey
+        elif [[ $envkey =~ $key ]]; then
+            envkey=${envkey/$key/$value}
+            echo $envkey
+            return
+        fi
+    done < <(echo "$SWITCH_PREFIXES" | tr ';' '\n')
+    echo $envkey
 }
 
 parse_args() {
     declare -ga POSARGS=()
     while (($# > 0)); do
         case "${1:-}" in
+            -p | --inherit-process)
+                unset -v PROCENV
+                declare -gn PROCENV=ENV
+                ;;
             -m | --mode*)
                 MODE=$(OPTIONAL=0 parse_param "$@") || shift $?
                 ;;
-            --build*)
-                BUILD=$(parse_param "$@") || shift $?
-                ;;
-            --host*)
-                HOST=$(parse_param "$@") || shift $?
-                ;;
-            --target*)
-                TARGET=$(parse_param "$@") || shift $?
-                ;;
             -e | --environment*)
                 CLIENV=$(parse_param "$@") || shift $?
+                # remove last semicolon if any
+                if [[ "$CLIENV" =~ .*\;$ ]]; then
+                    CLIENV="${CLIENV%?}"
+                fi
                 ;;
-            --pkgdir*)
-                PKGDIR=$(parse_param "$@") || shift $?
-                ;;
-            --envdir*)
-                ENVDIR=$(parse_param "$@") || shift $?
-                ;;
-            --switch-prefixes*)
-                local params=$(parse_param "$@") || shift $?
-                while read -d',' -r pair; do
-                    if [[ -z "${pair%%:*}" ]]; then
-                        SWITCH_PREFIXES["add"]=${pair##*:}
-                    else
-                        SWITCH_PREFIXES[${pair%%:*}]=${pair##*:}
-                    fi
-                done <<<"${params},"
+            -s | --switch-prefixes*)
+                SWITCH_PREFIXES=$(parse_param "$@") || shift $?
+                # remove last semicolon if any
+                if [[ "$SWITCH_PREFIXES" =~ .*\;$ ]]; then
+                    SWITCH_PREFIXES="${SWITCH_PREFIXES%?}"
+                fi
                 ;;
             --debug)
                 DEBUG=0
@@ -423,7 +338,7 @@ parse_args() {
                 POSARGS+=("$@")
                 ;;
             -[a-zA-Z]* | --[a-zA-Z]*)
-                die "Unrecognized argument ${1:-}"
+                fatal "Unrecognized argument ${1:-}"
                 ;;
             *)
                 POSARGS+=("${1:-}")
@@ -449,16 +364,16 @@ parse_param() {
     fi
 
     if [[ -z "${arg-}" && ! "${OPTIONAL-}" ]]; then
-        die "${param:-$1} requires an argument"
+        fatal "${param:-$1} requires an argument"
     fi
 
     echo "${arg:-}"
     return $toshift
 }
 
-die() {
-    exec 1>&2
-    echo "$@"
+fatal() {
+    echo "$@" >&2
+    kill -10 $PROC
     exit 1
 }
 
