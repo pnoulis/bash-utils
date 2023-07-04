@@ -31,7 +31,7 @@ main() {
 
     inotifywait --recursive \
                 --monitor \
-                --event modify,move,create,delete \
+                --event modify,delete \
                 --excludei "$regexExclude" \
                 "${WATCHFILE}" \
                 | while read change; do
