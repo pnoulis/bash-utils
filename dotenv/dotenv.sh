@@ -92,7 +92,7 @@ EOF
 # Options
 # parameter
 # -m --mode=
-MODE=production
+MODE=${MODE:-production}
 # parameter
 # -e --environment=
 CLIENV=
@@ -117,10 +117,10 @@ main() {
     parse_args "$@"
     set -- "${POSARGS[@]}"
 
+    ENV['MODE']=$MODE
     load_process_env
-    load_cli_env
 
-    # load POSARGS environment
+    # load directory and file environment presets
     for f in "$@"; do
         # expand path
         f=$(realpath $f 2>/dev/null)
@@ -135,6 +135,9 @@ main() {
             load_file_env $f
         fi
     done
+
+    substitute_process_env
+    load_cli_env
     env_to_stdout
 }
 
@@ -154,8 +157,8 @@ load_preset_env() {
    # in plain sight presets
 
    # read default preset
-   load_file_env $envdir/env
-   load_file_env $envdir/.env
+   load_file_env $envdir/env.default
+   load_file_env $envdir/.env.default
 
    # read $MODE preset
    load_file_env $envdir/env.$MODE
@@ -176,7 +179,7 @@ load_file_env() {
                 key=${key#?}
             fi
             ENV[$(switch_prefix $key)]=$(expand_envar $value)
-        done < $envfile
+        done < <(cat $envfile | sed -e '$a\') # ensure file ends in newline
     fi
 }
 
@@ -185,6 +188,17 @@ load_process_env() {
     while IFS='=' read -r key value; do
         PROCENV[$key]=$value
     done < <(cat "/proc/$$/environ" | tr '\0' '\n')
+}
+
+# substitute envars in ENV for envars in PROCENV
+substitute_process_env() {
+    for key in ${!PROCENV[@]}; do
+        if [[ -n "${ENV[$key]:-}" ]]; then
+            # if $key is found in ENV substitute it for the
+            # one found in PROCENV
+            ENV[$key]=${PROCENV[$key]}
+        fi
+    done
 }
 
 # command line parameter --environment
