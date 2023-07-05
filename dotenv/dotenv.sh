@@ -109,6 +109,7 @@ declare -gA PROCENV=()
 trap 'exit 1' 10
 declare -g PROC=$$
 # Exit script on error
+shopt -s extglob
 set -o errexit
 EXECDIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)
 declare -gA ENV=()
@@ -226,47 +227,162 @@ load_cli_env() {
 
 # expand environment variable
 expand_envar() {
-    local enval=$1
-    local -a vars=($(parse_envar $enval))
+    local envar=$1
+    local expanded=''
+    local tmp=''
 
-    let i=0
-    local key=""
-    local value=""
-    local expanded=""
-    while (( i < ${#vars[@]} )); do
-        key=${vars[$i]}
-        if [[ $key =~ \{.*\}$ ]]; then
-            # index $i references an expandable envar of the form ${envar}
-            key=${key#??} # remove ${
-            key=${key%?} # remove }
-        elif [[ $key =~ ^\$ ]]; then
-            # index $i references an expandable envar of the form $envar
-            key=${key#?} # remove $
-        else
-            # index $i does not reference an expandable envar
-            expanded+=${key}
-            ((i++))
-            continue
-        fi
-        # Fist try and expand the variable from ENV
-        value=${ENV[$key]}
-        # If value was not expanded try PROCENV
-        if [[ -z "${value:-}" ]]; then
-            value=${PROCENV[$key]}
-        fi
-        # If the value remains unexpanded throw an error
-        if [[ -z "${value:-}" ]]; then
-            fatal "Failed expansion" ${vars[$i]}
-        fi
-        expanded+=$value
-        ((i++))
-    done
+    while IFS='=' read -r action value; do
+        case "${action:-}" in
+            expand)
+                # Fist try and expand the variable from ENV
+                tmp=${ENV[$value]}
+                # If value was not expanded try PROCENV
+                if [[ -z "${tmp:-}" ]]; then
+                    tmp=${PROCENV[$value]}
+                fi
+                # If the value remains unexpanded throw an error
+                if [[ -z "${tmp:-}" ]]; then
+                    fatal 'Failed expansion for' "$value" 'in' "$envar"
+                else
+                    expanded+="$tmp"
+                fi
+                ;;
+            literal)
+                expanded+="$value"
+                ;;
+            *)
+                if [[ -z "${action:-}" && -n "${value:-}" ]]; then
+                    fatal 'Failed expansion for' "$value" 'in' "$envar"
+                fi
+                ;;
+        esac
+    done < <(parse_envar "$envar" | tr ' ' '\n')
 
-    echo $expanded
+    echo "$expanded"
+
+    # while (( i < ${#vars[@]} )); do
+    #     key=${vars[$i]}
+    #     if [[ $key =~ \{.*\}$ ]]; then
+    #         # index $i references an expandable envar of the form ${envar}
+    #         key=${key#??} # remove ${
+    #         key=${key%?} # remove }
+    #     elif [[ $key =~ ^\$ ]]; then
+    #         # index $i references an expandable envar of the form $envar
+    #         key=${key#?} # remove $
+    #     else
+    #         # index $i does not reference an expandable envar
+    #         expanded+=${key}
+    #         ((i++))
+    #         continue
+    #     fi
+    #     # Fist try and expand the variable from ENV
+    #     value=${ENV[$key]}
+    #     # If value was not expanded try PROCENV
+    #     if [[ -z "${value:-}" ]]; then
+    #         value=${PROCENV[$key]}
+    #     fi
+    #     # If the value remains unexpanded throw an error
+    #     if [[ -z "${value:-}" ]]; then
+    #         fatal "Failed expansion" ${vars[$i]}
+    #     fi
+    #     expanded+=$value
+    #     ((i++))
+    # done
+
+    # echo $expanded
+}
+
+# Used by parse_envar
+strip_punct() {
+    echo "$(echo $1 | sed s/[$\{\}\\]//gi)"
 }
 
 # Break down environment variable value into constituent parts
 parse_envar() {
+    local envar=$1
+    local -a parsed=()
+    local char=''
+    let lenparsed=0
+
+    while [[ -n "${envar:-}" ]]; do
+        char=${envar:0:1}
+        envar=${envar#?}
+
+        parsed[lenparsed]+=$char
+
+        if [[ -z "${envar:-}" ]]; then
+            # EOS = End Of String
+            parsed[lenparsed]+='EOS'
+        fi
+
+        # echo "${parsed[lenparsed]}"
+        case "${parsed[lenparsed]}" in
+            # $one$
+            \$+([[:alnum:]_/:-])\$)
+                # echo 'matches $one$'
+                parsed[lenparsed++]="expand=$(strip_punct ${parsed[lenparsed]})"
+                parsed[lenparsed]='$'
+                ;;
+            # ${one}
+            \$\{+([[:alnum:]_/:-])\})
+                # echo 'maches ${one}'
+                parsed[lenparsed++]="expand=$(strip_punct ${parsed[lenparsed]})"
+                ;;
+            # punct$
+            +([:/_-])\$)
+                echo 'matches punct'
+                parsed[lenparsed++]="literal=${parsed[lenparsed]%?}"
+                parsed[lenparsed]='$'
+                ;;
+            # one$
+            +([[:alnum:]_/-])[a-zA-Z]*([[:alnum:]_/:-])\$)
+                # echo 'matches one$'
+                parsed[lenparsed++]="literal=$(strip_punct ${parsed[lenparsed]})"
+                parsed[lenparsed]='$'
+                ;;
+            # one\$
+            +([[:alnum:]_/-])[a-zA-Z]*([[:alnum:]_/:-])\$)
+                # echo 'matches one\$'
+                parsed[lenparsed++]="literal=$(strip_punct ${parsed[lenparsed]})"
+                parsed[lenparsed]='\$'
+                ;;
+            # \$one$
+            \\\$+([[:alnum:]_/:-])\$)
+                # echo 'matches \$one$'
+                parsed[lenparsed++]="literal=${parsed[lenparsed]#?}"
+                parsed[lenparsed]='$'
+                ;;
+            # \${one}
+            \\\$\{+([[:alnum:]_/:-])\})
+                # echo 'matches \${one}'
+                parsed[lenparsed++]="literal=${parsed[lenparsed]#?}"
+                ;;
+            # \$..EOS
+            \\\$*EOS)
+                # echo 'maches \$..EOS'
+                parsed[lenparsed]="${parsed[lenparsed]#?}"
+                parsed[lenparsed++]="literal=${parsed[lenparsed]%???}"
+                ;;
+            # $oneEOS
+            # ${one}EOS
+            \$?(\{)*EOS)
+                # echo 'matches $oneEOS'
+                parsed[lenparsed++]="expand=$(strip_punct ${parsed[lenparsed]%???})"
+                ;;
+            # oneEOS
+            [[:alnum:][:punct:]]*EOS)
+                # echo 'matches *EOS'
+                parsed[lenparsed++]="literal=$(strip_punct ${parsed[lenparsed]%???})"
+                ;;
+            *)
+                continue
+                ;;
+        esac
+    done
+    echo "${parsed[*]}"
+}
+
+parse_envar_old() {
     envar=$1
     let i=0
     let y=0
