@@ -259,159 +259,83 @@ expand_envar() {
     done < <(parse_envar "$envar" | tr ' ' '\n')
 
     echo "$expanded"
-
-    # while (( i < ${#vars[@]} )); do
-    #     key=${vars[$i]}
-    #     if [[ $key =~ \{.*\}$ ]]; then
-    #         # index $i references an expandable envar of the form ${envar}
-    #         key=${key#??} # remove ${
-    #         key=${key%?} # remove }
-    #     elif [[ $key =~ ^\$ ]]; then
-    #         # index $i references an expandable envar of the form $envar
-    #         key=${key#?} # remove $
-    #     else
-    #         # index $i does not reference an expandable envar
-    #         expanded+=${key}
-    #         ((i++))
-    #         continue
-    #     fi
-    #     # Fist try and expand the variable from ENV
-    #     value=${ENV[$key]}
-    #     # If value was not expanded try PROCENV
-    #     if [[ -z "${value:-}" ]]; then
-    #         value=${PROCENV[$key]}
-    #     fi
-    #     # If the value remains unexpanded throw an error
-    #     if [[ -z "${value:-}" ]]; then
-    #         fatal "Failed expansion" ${vars[$i]}
-    #     fi
-    #     expanded+=$value
-    #     ((i++))
-    # done
-
-    # echo $expanded
-}
-
-# Used by parse_envar
-strip_punct() {
-    echo "$(echo $1 | sed s/[$\{\}\\]//gi)"
 }
 
 # Break down environment variable value into constituent parts
+# Returns an array of strings each of the form
+# action=value
+# the action part specifies how the value should be interpreted.
+# Available actions are:
+# 1. expand
+# 2. exec
+# 3. literal
 parse_envar() {
     local envar=$1
     local -a parsed=()
-    local char=''
     let lenparsed=0
+    let LOOKING_FOR_SS=1
+    let LOOKING_FOR_SE=0
+    let ESCAPING=0
 
     while [[ -n "${envar:-}" ]]; do
         char=${envar:0:1}
         envar=${envar#?}
+        case $char in
+            \\)
+                if [[ "${envar:0:1}" == "$" ]]; then
+                    ESCAPING=1
+                    continue
+                fi
+                ;;
+            \{)
+                if (( LOOKING_FOR_SE )); then
+                    # part of special token
+                    continue
+                fi
+                ;;
+            \$ | \})
+                if (( ESCAPING == 1 )); then
+                    ((++ESCAPING))
+                elif (( ESCAPING == 2 )); then
+                    ESCAPING=0
+                    LOOKING_FOR_SS=1
+                    if (( ${#parsed[lenparsed]} >= 1 )); then
+                        parsed[lenparsed++]="literal=${parsed[lenparsed]}$char"
+                    fi
+                    continue
+                elif (( LOOKING_FOR_SS )); then
+                    LOOKING_FOR_SS=0
+                    LOOKING_FOR_SE=1
+                    if (( ${#parsed[lenparsed]} >= 1 )); then
+                        parsed[lenparsed++]="literal=${parsed[lenparsed]}"
+                    fi
+                    continue
+                elif (( LOOKING_FOR_SE )); then
+                    LOOKING_FOR_SS=1
+                    LOOKING_FOR_SE=0
+                    parsed[lenparsed++]="expand=${parsed[lenparsed]}"
+                    continue
+                fi
+                ;;
+            *)
+                ;;
+        esac
 
         parsed[lenparsed]+=$char
 
+        # END OF ENVAR
         if [[ -z "${envar:-}" ]]; then
-            # EOS = End Of String
-            parsed[lenparsed]+='EOS'
+            if (( LOOKING_FOR_SS )); then
+                parsed[lenparsed++]="literal=${parsed[lenparsed]}"
+            fi
+
+            if (( LOOKING_FOR_SE )); then
+                parsed[lenparsed++]="expand=${parsed[lenparsed]}"
+            fi
         fi
 
-        # echo "${parsed[lenparsed]}"
-        case "${parsed[lenparsed]}" in
-            # $one$
-            \$+([[:alnum:]_/:-])\$)
-                # echo 'matches $one$'
-                parsed[lenparsed++]="expand=$(strip_punct ${parsed[lenparsed]})"
-                parsed[lenparsed]='$'
-                ;;
-            # ${one}
-            \$\{+([[:alnum:]_/:-])\})
-                # echo 'maches ${one}'
-                parsed[lenparsed++]="expand=$(strip_punct ${parsed[lenparsed]})"
-                ;;
-            # punct$
-            +([:/_-])\$)
-                echo 'matches punct'
-                parsed[lenparsed++]="literal=${parsed[lenparsed]%?}"
-                parsed[lenparsed]='$'
-                ;;
-            # one$
-            +([[:alnum:]_/-])[a-zA-Z]*([[:alnum:]_/:-])\$)
-                # echo 'matches one$'
-                parsed[lenparsed++]="literal=$(strip_punct ${parsed[lenparsed]})"
-                parsed[lenparsed]='$'
-                ;;
-            # one\$
-            +([[:alnum:]_/-])[a-zA-Z]*([[:alnum:]_/:-])\$)
-                # echo 'matches one\$'
-                parsed[lenparsed++]="literal=$(strip_punct ${parsed[lenparsed]})"
-                parsed[lenparsed]='\$'
-                ;;
-            # \$one$
-            \\\$+([[:alnum:]_/:-])\$)
-                # echo 'matches \$one$'
-                parsed[lenparsed++]="literal=${parsed[lenparsed]#?}"
-                parsed[lenparsed]='$'
-                ;;
-            # \${one}
-            \\\$\{+([[:alnum:]_/:-])\})
-                # echo 'matches \${one}'
-                parsed[lenparsed++]="literal=${parsed[lenparsed]#?}"
-                ;;
-            # \$..EOS
-            \\\$*EOS)
-                # echo 'maches \$..EOS'
-                parsed[lenparsed]="${parsed[lenparsed]#?}"
-                parsed[lenparsed++]="literal=${parsed[lenparsed]%???}"
-                ;;
-            # $oneEOS
-            # ${one}EOS
-            \$?(\{)*EOS)
-                # echo 'matches $oneEOS'
-                parsed[lenparsed++]="expand=$(strip_punct ${parsed[lenparsed]%???})"
-                ;;
-            # oneEOS
-            [[:alnum:][:punct:]]*EOS)
-                # echo 'matches *EOS'
-                parsed[lenparsed++]="literal=$(strip_punct ${parsed[lenparsed]%???})"
-                ;;
-            *)
-                continue
-                ;;
-        esac
     done
-    echo "${parsed[*]}"
-}
-
-parse_envar_old() {
-    envar=$1
-    let i=0
-    let y=0
-    vars=()
-    char=
-    let varstart=0
-
-    while (( i < ${#envar} )); do
-        char=${envar:$i:1}
-        case $char in
-            \$ | \})
-                if (( varstart )); then
-                    vars[$y]+=$char
-                    varstart=0
-                else
-                    vars+=($char)
-                    varstart=1
-                fi
-                if (( i > 0 )); then
-                    ((y++))
-                fi
-                ;;
-            *)
-                vars[$y]+=$char
-                ;;
-        esac
-        ((i++))
-    done
-    echo "${vars[*]}"
+    echo "${parsed[@]}"
 }
 
 # prefix switch
