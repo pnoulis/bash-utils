@@ -365,7 +365,7 @@ parse_args() {
                 MODE=$(OPTIONAL=0 parse_param "$@") || shift $?
                 ;;
             -e | --environment*)
-                CLIENV=$(parse_param "$@") || shift $?
+                CLIENV=$(OPTIONAL=0 parse_param "$@") || shift $?
                 # remove last semicolon if any
                 if [[ "$CLIENV" =~ .*\;$ ]]; then
                     CLIENV="${CLIENV%?}"
