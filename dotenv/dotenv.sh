@@ -109,7 +109,6 @@ declare -gA PROCENV=()
 trap 'exit 1' 10
 declare -g PROC=$$
 # Exit script on error
-shopt -s extglob
 set -o errexit
 EXECDIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)
 declare -gA ENV=()
@@ -365,7 +364,7 @@ parse_args() {
                 MODE=$(OPTIONAL=0 parse_param "$@") || shift $?
                 ;;
             -e | --environment*)
-                CLIENV=$(parse_param "$@") || shift $?
+                CLIENV=$(OPTIONAL=0 parse_param "$@") || shift $?
                 # remove last semicolon if any
                 if [[ "$CLIENV" =~ .*\;$ ]]; then
                     CLIENV="${CLIENV%?}"
