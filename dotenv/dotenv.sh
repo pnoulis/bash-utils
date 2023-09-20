@@ -109,7 +109,6 @@ declare -gA PROCENV=()
 trap 'exit 1' 10
 declare -g PROC=$$
 # Exit script on error
-shopt -s extglob
 set -o errexit
 EXECDIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)
 declare -gA ENV=()
