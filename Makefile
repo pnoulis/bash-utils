@@ -10,7 +10,7 @@ package_distname := $(package)-$(package_version)
 ## Anchors
 srcdir = .
 abs_srcdir = $(realpath .)
-VPATH = tmp dotenv watcher
+VPATH = tmp dotenv watcher pnor
 ## Build
 buildir = $(srcdir)/build
 abs_buildir = $(abs_srcdir)/build
@@ -99,6 +99,9 @@ install: build
 uninstall:
 	-cd $(DESTDIR)$(bindir) && rm -f $(executables)
 	rmdir $(DESTDIR)$(bindir)
+
+.DEFAULT:
+	@echo do nothing
 
 .PHONY: _FORCE
 _FORCE:

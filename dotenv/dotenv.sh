@@ -234,10 +234,10 @@ expand_envar() {
         case "${action:-}" in
             expand)
                 # Fist try and expand the variable from ENV
-                tmp=${ENV[$value]}
+                tmp=${ENV["$value"]}
                 # If value was not expanded try PROCENV
                 if [[ -z "${tmp:-}" ]]; then
-                    tmp=${PROCENV[$value]}
+                    tmp=${PROCENV["$value"]}
                 fi
                 # If the value remains unexpanded throw an error
                 if [[ -z "${tmp:-}" ]]; then
@@ -281,7 +281,7 @@ parse_envar() {
         envar=${envar#?}
         case $char in
             \\)
-                if [[ "${envar:0:1}" == "$" ]]; then
+                if [[ "${envar:0:1}" =~ [$\{\}] ]]; then
                     ESCAPING=1
                     continue
                 fi
